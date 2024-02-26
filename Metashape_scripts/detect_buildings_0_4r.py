@@ -55,7 +55,7 @@ class DetectObjectsDlg(QtWidgets.QDialog):
         
         self.chunk = Metashape.app.document.chunk
         self.ortho_crs = self.chunk.orthomosaic.crs
-        self.num_keypoints = 2
+        self.num_keypoints = 9
 
         QtWidgets.QDialog.__init__(self, parent)
         self.setWindowTitle("Поиск точек на ортофотоплане")
