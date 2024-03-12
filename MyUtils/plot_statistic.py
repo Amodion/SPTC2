@@ -75,6 +75,6 @@ def plot_stats(num_epochs, bbox_stats, kps_stats, loss_bb, loss_kp, loss, num=No
         plt.show()
     
     if num:
-        figure.savefig(f'{log_path}/Metric_log_{num + 1}.jpg')
+        figure.savefig(f'{log_path}/Metric_log_{num}.jpg')
     else:
         figure.savefig(f'{log_path}/Metric_log.jpg')
