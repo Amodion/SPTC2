@@ -22,6 +22,8 @@ class DetectObjectsDlg(QtWidgets.QDialog):
     def __init__(self, parent):
         
         self.kps_group_label = 'Обнаруженные точки'
+        
+        
 
         if len(Metashape.app.document.path) > 0:
             self.working_dir = str(pathlib.Path(Metashape.app.document.path).parent)
@@ -58,7 +60,7 @@ class DetectObjectsDlg(QtWidgets.QDialog):
         self.num_keypoints = 2
 
         QtWidgets.QDialog.__init__(self, parent)
-        self.setWindowTitle("Поиск точек на ортофотоплане")
+        self.setWindowTitle(f"Поиск точек на ортофотоплане (Metashape version: {self.major_version})")
 
         self.create_gui()
 
@@ -276,7 +278,18 @@ class DetectObjectsDlg(QtWidgets.QDialog):
         new_shape = self.chunk.shapes.addShape()
         new_shape.label = label
         new_shape.group = self.target_group_kps
-        new_shape.geometry = Metashape.Geometry.Point(coordinates) 
+        new_shape.geometry = Metashape.Geometry.Point(coordinates)
+
+    def draw_shape_point_1_6(self, label: str, coordinates: Metashape.Vector):
+        if len(coordinates) == 0:
+            print('None in draw point')
+            return None
+        shape = self.chunk.shapes.addShape()
+        shape.label = label
+        shape.type = Metashape.Shape.Type.Point
+        shape.group = self.target_group_kps
+        shape.vertices = [coordinates]
+        shape.has_z = True
     
 
     def get_object_detection_model(self, num_classes):
@@ -470,9 +483,13 @@ class DetectObjectsDlg(QtWidgets.QDialog):
             print(f'Points filtered for {round(time.time() - time_filter, 2)} sec. Method: {self.combo.currentText()}')
         else:
             print('No filter applyied')
+        print(len(predicted_points), len(scores))
         for point, score in zip(predicted_points, scores):
             score = round(float(score), 2)
-            self.draw_shape_point(label=f'Point_{score}', coordinates=point)
+            if self.major_version > 1.7:
+                self.draw_shape_point(label=f'Point_{score}', coordinates=point)
+            else:
+                self.draw_shape_point_1_6(label=f'Point_{score}', coordinates=point)
 
     def cut_score_V2(self, predictions: dict, score_thresh = 0.5):
         new_pred = {'boxes': [], 'labels': [], 'scores': []}
@@ -499,7 +516,23 @@ class DetectObjectsDlg(QtWidgets.QDialog):
         state_dict = torch.load(self.model_kps_path, map_location=self.device)
         model.load_state_dict(state_dict)        
         
-        return model    
+        return model
+
+    def get_model_kps_V2(self):
+        from torchvision.models.detection.keypoint_rcnn import KeypointRCNNPredictor
+        from torchvision.models.detection.rpn import AnchorGenerator
+        from torchvision.models.detection import keypointrcnn_resnet50_fpn
+
+        model = keypointrcnn_resnet50_fpn(weights='DEFAULT')
+
+        in_features = model.roi_heads.keypoint_predictor.kps_score_lowres.in_channels
+        model.roi_heads.keypoint_predictor = KeypointRCNNPredictor(in_channels=in_features, num_keypoints=self.num_keypoints)
+
+        model.name = 'keypointrcnn_resnet50_fpn'
+        state_dict = torch.load(self.model_kps_path, map_location=self.device)
+        model.load_state_dict(state_dict)        
+        
+        return model
     
     def visualize(self, image, bboxes, keypoints, image_original=None, bboxes_original=None, keypoints_original=None, label=None, bld_score=None, kps_scores=None):
         import seaborn as sns
@@ -600,12 +633,12 @@ class DetectObjectsDlg(QtWidgets.QDialog):
             
     def process(self):    
         try:
-            
+            self.stopped = False
+
             self.target_group_kps = self.chunk.shapes.addGroup()
             self.target_group_kps.label = self.kps_group_label
             self.target_group_kps.enabled = False
-        
-            self.stopped = False
+
             self.btnRun.setEnabled(False)
             self.combo.setEnabled(False)
             self.btnStop.setEnabled(True)
