@@ -124,11 +124,11 @@ class NCornerDataset(Dataset):
             if ann['type'] == 'keypointlabels':
                 x = ann['value']['x'] / 100 * ann['original_width']
                 y = ann['value']['y'] / 100 * ann['original_height']
-                keypoints[0].append([x, y, 1])
+                keypoints[0].append([int(x), int(y), 1])
             else:
                 x, y = ann['value']['x'] / 100 * ann['original_width'], ann['value']['y'] / 100 * ann['original_height']
                 w, h = ann['value']['width'] / 100 * ann['original_width'], ann['value']['height'] / 100 * ann['original_height']
-                bbox.append([x, y, x + w, y + h])
+                bbox.append([int(x), int(y), int(x + w), int(y + h)])
         return keypoints, bbox
 
     def sort_key(self, d: dict):
