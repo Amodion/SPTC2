@@ -10,31 +10,52 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 
 class NCornerDataset(Dataset):
-    def __init__(self, root, transform=None, demo=False, N=9):                
+    def __init__(self, root, transform=None, demo=False, N=None, corners=None):                
         self.root = root
         self.transform = transform
         self.demo = demo # Use demo=True if you need transformed and original images (for example, for visualization purposes)
-        self.imgs_files = sorted(os.listdir(os.path.join(root, "images")))
+        #self.imgs_files = sorted(os.listdir(os.path.join(root, "images")))
         self.N = N
         with open(os.path.join(root, 'annotation.json'), 'r') as file:
             annotations = json.load(file)
+        if corners is not None:
+            annotations = self.choose_corners(annotations, corners)
+            if self.N is None:
+                self.N = max(corners)
         self.annotations = sorted(annotations, key=self.sort_key)
-        assert len(self.imgs_files)==len(self.annotations), f'Количество изображений ({len(self.imgs_files)}) не совпадает с количеством аннотаций ({self.annotations})!'
+        #assert len(self.imgs_files)==len(self.annotations), f'Количество изображений ({len(self.imgs_files)}) не совпадает с количеством аннотаций ({self.annotations})!'
 
     def __getitem__(self, idx):
-        img_path = os.path.join(self.root, "images", self.imgs_files[idx])
-        annotations_result = self.annotations[idx]['annotations'][0]['result']
+        #img_path = os.path.join(self.root, "images", self.imgs_files[idx])
+
+        if not 'annotations' in self.annotations[idx]:
+            raise Exception('Wrong convert. No annotations key')
+            
+        annotations_result = self.annotations[idx]['annotations'][0]['result'] # CHECK IF KEYS EXIST!!!!
+
+        output = self.export_annotations(annotations_result)
+
+        if output is None:
+            raise Exception('Wrong convert. Result error.')
+
+        keypoints_original, bboxes_original = output
+
+        img_path = self.get_image(self.annotations[idx])
+
+        if img_path is None:
+            raise Exception('Wrong convert. Image error')
+
+        img_path = os.path.join(self.root, 'images', img_path)
 
         img_original = cv2.imread(img_path)
         img_h, img_w = img_original.shape[0], img_original.shape[1]
         img_original = cv2.cvtColor(img_original, cv2.COLOR_BGR2RGB)
 
-        keypoints_original, bboxes_original = self.export_annotations(annotations_result)
-        
         kps = copy.deepcopy(keypoints_original)
         #print(kps)
-        while len(keypoints_original[0]) < self.N:
-            keypoints_original[0].append([0, 0, 0])      
+        if self.N is not None:
+            while len(keypoints_original[0]) < self.N:
+                keypoints_original[0].append([0, 0, 0])      
 
         ###### UNCOMMENT FOR EXTRA KPS CYCLE COPY TRUE KPS ###########
         #for i in range(self.N):
@@ -52,7 +73,7 @@ class NCornerDataset(Dataset):
             try:
                 transformed = self.transform(image=img_original, bboxes=bboxes_original, bboxes_labels=bboxes_labels_original, keypoints=keypoints_original_flattened)
             except Exception as e:
-                print(f'Lines was:\n{lines}\n\n\nImage width and height: {img_w}, {img_h}\n\n\nImage path: {img_path}')
+                print(f'Image width and height: {img_w}, {img_h}\n\n\nImage path: {img_path}\n\nTask ID: {self.annotations[idx]["inner_id"]}')
                 raise e
                 
             img = transformed['image']
@@ -80,8 +101,8 @@ class NCornerDataset(Dataset):
                     # keypoints_original[o_idx][k_idx][2] - original visibility of keypoint
                     obj_keypoints.append(kp + [keypoints_original[o_idx][k_idx][2]])
                 keypoints.append(obj_keypoints)
-            while len(keypoints[0]) < self.N:
-                keypoints[0].append([0, 0, 0]) 
+            #while len(keypoints[0]) < self.N:
+                #keypoints[0].append([0, 0, 0]) 
         else:
             try:
                 img, bboxes, keypoints = img_original, bboxes_original, keypoints_original        
@@ -115,22 +136,33 @@ class NCornerDataset(Dataset):
             return img, target
     
     def __len__(self):
-        return len(self.imgs_files)
+        return len(self.annotations)
 
     def export_annotations(self, result: list):
         keypoints = [[]]
         bbox = []
         for ann in result:
+            if 'original_width' not in ann or 'original_height' not in ann:
+                return None
             if ann['type'] == 'keypointlabels':
-                x = ann['value']['x'] / 100 * ann['original_width']
-                y = ann['value']['y'] / 100 * ann['original_height']
-                keypoints[0].append([int(x), int(y), 1])
+                if all([key in ann['value'] for key in ['x', 'y']]):
+                    x = ann['value']['x'] / 100 * ann['original_width']
+                    y = ann['value']['y'] / 100 * ann['original_height']
+                    keypoints[0].append([int(x), int(y), 1])
             else:
-                x, y = ann['value']['x'] / 100 * ann['original_width'], ann['value']['y'] / 100 * ann['original_height']
-                w, h = ann['value']['width'] / 100 * ann['original_width'], ann['value']['height'] / 100 * ann['original_height']
-                bbox.append([int(x), int(y), int(x + w), int(y + h)])
+                if all([key in ann['value'] for key in ['x', 'y', 'width', 'height']]):
+                    x, y = ann['value']['x'] / 100 * ann['original_width'], ann['value']['y'] / 100 * ann['original_height']
+                    w, h = ann['value']['width'] / 100 * ann['original_width'], ann['value']['height'] / 100 * ann['original_height']
+                    bbox.append([int(x), int(y), int(x + w), int(y + h)])
         return keypoints, bbox
 
+    def choose_corners(self, annotations, corners):
+        return [annotation for annotation in annotations if (len(annotation['annotations'][0]['result']) - 1) in corners]
+
+    def get_image(self, d: dict):
+        if 'data' in d:
+            return d['data']['img'].split('-')[-1]
+    
     def sort_key(self, d: dict):
         return d['data']['img'].split('-')[-1]
     
@@ -140,6 +172,8 @@ class NCornerDataset(Dataset):
         max_points = 0
         buildings = {'One corner': 0, 'Two corner': 0, 'Three corner': 0, 'Many corner': 0}
         annotations_without_buildings = []
+
+        print(f'Lenght of dataset is {self.__len__()}')
 
         for idx, annotation in enumerate(self.annotations):
             num_p = 0
@@ -153,9 +187,11 @@ class NCornerDataset(Dataset):
                     building_exist = True
             
             max_points = max(num_p, max_points)
+            if num_p == 0:
+                print(annotation['inner_id'])
             nums_of_points.append(num_p)
             if not building_exist:
-                annotations_without_buildings.append(self.imgs_files[idx])
+                annotations_without_buildings.append((self.get_image(annotation), annotation['inner_id']))
 
             if num_p == 1:
                 buildings['One corner'] += 1
