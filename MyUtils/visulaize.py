@@ -2,14 +2,16 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import cv2
 
-def visualize(image, bboxes, keypoints, image_original=None, bboxes_original=None, keypoints_original=None, label=None, bld_score=None, kps_scores=None):
+def visualize(image, bboxes, keypoints, image_original=None, bboxes_original=None, keypoints_original=None, save_path=None, bld_score=None, kps_scores=None):
     fontsize = 18
     sns.set_style("white")
+
+    thickness = 1 + 2*int(image.copy().shape[0] > 700) + 2*int(image.copy().shape[1] > 700)
     
     for num, bbox in enumerate(bboxes):
         start_point = (bbox[0], bbox[1])
         end_point = (bbox[2], bbox[3])
-        image = cv2.rectangle(image.copy(), start_point, end_point, (0,255,0), 1)
+        image = cv2.rectangle(image.copy(), start_point, end_point, (0,255,0), thickness)
         if bld_score:
             score = round(bld_score[num], 2)
             image = cv2.putText(image.copy(), ' Building' + str(score), start_point, cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255,0), 2, cv2.LINE_AA)
@@ -24,18 +26,17 @@ def visualize(image, bboxes, keypoints, image_original=None, bboxes_original=Non
             if kps_scores is not None:
                 score = round(kps_scores[idx], 2)
                 image = cv2.putText(image.copy(), ' ' + str(score), tuple(kp[:2]), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,0,0), 1, cv2.LINE_AA)
-    if label:
-        raise ValueError('Configure label before using it!')
-        cv2.imwrite(f'C:/Users/User/Petr/Net_2/check_model/Rod/pred/{label}', cv2.cvtColor(image, cv2.COLOR_RGB2BGR))
 
-    elif image_original is None and keypoints_original is None:
+    if image_original is None and keypoints_original is None:
         plt.figure(figsize=(15,15))
         plt.imshow(image)
+        if save_path:
+            cv2.imwrite(save_path, cv2.cvtColor(image, cv2.COLOR_RGB2BGR))
     else:
         for bbox in bboxes_original:
             start_point = (bbox[0], bbox[1])
             end_point = (bbox[2], bbox[3])
-            image_original = cv2.rectangle(image_original.copy(), start_point, end_point, (0,255,0), 1)
+            image_original = cv2.rectangle(image_original.copy(), start_point, end_point, (0,255,0), thickness)
         
         for kps in keypoints_original:
             for idx, kp in enumerate(kps):
@@ -49,3 +50,7 @@ def visualize(image, bboxes, keypoints, image_original=None, bboxes_original=Non
 
         ax[1].imshow(image)
         ax[1].set_title('Transformed image', fontsize=fontsize)
+
+        if save_path:
+            cv2.imwrite(save_path[:-4] + '_tranformed.jpg', cv2.cvtColor(image, cv2.COLOR_RGB2BGR))
+            cv2.imwrite(save_path, cv2.cvtColor(image_original, cv2.COLOR_RGB2BGR))

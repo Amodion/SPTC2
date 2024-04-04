@@ -237,7 +237,259 @@ class NCornerDataset(Dataset):
         print(*set(annotations_with_extra_buildings))
 
 
+class PillarsDataset(Dataset):
+    def __init__(self, root, transform=None, demo=False):
+        self.root = root
+        self.transform = transform
+        self.demo = demo # Use demo=True if you need transformed and original images (for example, for visualization purposes)
+        self.max_corners = None
+        self.inner_id = None
+        with open(os.path.join(root, 'annotation.json'), 'r') as file:
+            annotations = json.load(file)
+        self.annotations = annotations
+        assert len(self.annotations) != 0, 'Annotations file empty!' 
 
+    def __getitem__(self, idx):
+        assert 'inner_id' in self.annotations[idx], f'No inner id at item {idx}'
+        self.inner_id = self.annotations[idx]['inner_id']
+        
+        assert 'annotations' in self.annotations[idx], f'No annotations key. {self.inner_id=}'
+        assert 'result' in self.annotations[idx]['annotations'][0], f'No result in annotations. {self.inner_id=}'
+            
+        result = self.annotations[idx]['annotations'][0]['result']
+
+        output = self.export_annotations(result)
+
+        if not all([out is not None for out in output]):
+            raise Exception(f'Wrong convert. Result error.\nTask ID: {self.inner_id}')
+
+        keypoints_original, bboxes_original = output
+
+        img_path = self.get_image(self.annotations[idx])
+
+        if img_path is None:
+            raise Exception('Wrong convert. Image error')
+
+        img_path = os.path.join(self.root, 'images', img_path)
+
+        img_original = cv2.imread(img_path)
+        img_h, img_w = img_original.shape[0], img_original.shape[1]
+        img_original = cv2.cvtColor(img_original, cv2.COLOR_BGR2RGB)
+
+        kps = copy.deepcopy(keypoints_original)
+
+        assert self.max_corners is not None, 'Max number of corners per pillar is unknown! Please, use dataset.explore first to find it.'
+            
+        for pillar in keypoints_original:
+            while len(pillar) < self.max_corners:
+               pillar.append([0, 0, 0])      
+
+        ###### UNCOMMENT FOR EXTRA KPS CYCLE COPY TRUE KPS ###########
+        #for i in range(self.N):
+        #    keypoints_original[0][i] = kps[0][i % len(kps[0])]
+
+        bboxes_labels_original = ['Pillar' for _ in bboxes_original]            
+
+        if self.transform:   
+            # Converting keypoints from [x,y,visibility]-format to [x, y]-format + Flattening nested list of keypoints            
+            # For example, if we have the following list of keypoints for three objects (each object has two keypoints):
+            # [[obj1_kp1, obj1_kp2], [obj2_kp1, obj2_kp2], [obj3_kp1, obj3_kp2]], where each keypoint is in [x, y]-format            
+            # Then we need to convert it to the following list:
+            # [obj1_kp1, obj1_kp2, obj2_kp1, obj2_kp2, obj3_kp1, obj3_kp2]
+            keypoints_original_flattened = [el[0:2] for kp in keypoints_original for el in kp]
+            try:
+                transformed = self.transform(image=img_original, bboxes=bboxes_original, bboxes_labels=bboxes_labels_original, keypoints=keypoints_original_flattened)
+            except Exception as e:
+                print(f'Image width and height: {img_w}, {img_h}\n\n\nImage path: {img_path}\n\nTask ID: {self.inner_id}\n{keypoints_original=}\n{bboxes_original=}\nKps len = {len(keypoints_original)}\nBbox len = {len(bboxes_original)}\n{keypoints_original_flattened=}')
+                raise e
+                
+            img = transformed['image']
+            h, w = img.shape[0], img.shape[1]
+            bboxes = transformed['bboxes']
+    
+           # bboxes = [[max(2, bboxes[0][0]), max(2, bboxes[0][1]), min(w - 2, bboxes[0][2]), min(h - 2, bboxes[0][3])]]
+
+            # Unflattening list transformed['keypoints']
+            # For example, if we have the following list of keypoints for three objects (each object has two keypoints):
+            # [obj1_kp1, obj1_kp2, obj2_kp1, obj2_kp2, obj3_kp1, obj3_kp2], where each keypoint is in [x, y]-format
+            # Then we need to convert it to the following list:
+            # [[obj1_kp1, obj1_kp2], [obj2_kp1, obj2_kp2], [obj3_kp1, obj3_kp2]]
+            
+            keypoints_transformed_unflattened = []
+            for idx in range(0, len(transformed['keypoints']) - self.max_corners + 1, self.max_corners):
+                keypoints_transformed_unflattened.append(transformed['keypoints'][idx:idx+self.max_corners])
+            
+            #print(keypoints_transformed_unflattened)
+           
+            # Converting transformed keypoints from [x, y]-format to [x,y,visibility]-format by appending original visibilities to transformed coordinates of keypoints
+            keypoints = []
+            for o_idx, obj in enumerate(keypoints_transformed_unflattened): # Iterating over objects
+                obj_keypoints = []
+                for k_idx, kp in enumerate(obj): # Iterating over keypoints in each object
+                    # kp - coordinates of keypoint
+                    # keypoints_original[o_idx][k_idx][2] - original visibility of keypoint
+                    obj_keypoints.append(list(kp) + [keypoints_original[o_idx][k_idx][2]])
+                keypoints.append(obj_keypoints)
+            
+            for pillar in keypoints:
+                while len(pillar) < self.max_corners:
+                    pillar.append([0, 0, 0]) 
+        else:
+            try:
+                img, bboxes, keypoints = img_original, bboxes_original, keypoints_original        
+            except Exception as e:
+                print(img_path)
+                raise e
+        # Convert everything into a torch tensor
+        bboxes = torch.as_tensor(bboxes, dtype=torch.float32)       
+        target = {}
+        target["boxes"] = bboxes
+        target["labels"] = torch.as_tensor([1 for _ in bboxes], dtype=torch.int64) # all objects are buildings
+        target["image_id"] = torch.tensor([idx])
+        target["area"] = (bboxes[:, 3] - bboxes[:, 1]) * (bboxes[:, 2] - bboxes[:, 0])
+        target["iscrowd"] = torch.zeros(len(bboxes), dtype=torch.int64)
+        target["keypoints"] = torch.as_tensor(keypoints, dtype=torch.float32)        
+        img = F.to_tensor(img)
+        
+        bboxes_original = torch.as_tensor(bboxes_original, dtype=torch.float32)
+        target_original = {}
+        target_original["boxes"] = bboxes_original
+        target_original["labels"] = torch.as_tensor([1 for _ in bboxes_original], dtype=torch.int64)
+        target_original["image_id"] = torch.tensor([idx])
+        target_original["area"] = (bboxes_original[:, 3] - bboxes_original[:, 1]) * (bboxes_original[:, 2] - bboxes_original[:, 0])
+        target_original["iscrowd"] = torch.zeros(len(bboxes_original), dtype=torch.int64)
+        target_original["keypoints"] = torch.as_tensor(keypoints_original, dtype=torch.float32)        
+        img_original = F.to_tensor(img_original)
+
+        assert len(target['keypoints']) != 0, f'No keypoints at image {self.get_image(self.annotations[idx])}, {self.inner_id=}'
+        assert len(target_original['keypoints']) != 0, f'No keypoints at image {self.get_image(self.annotations[idx])}, {self.inner_id=}'
+        if self.demo:
+            return img, target, img_original, target_original
+        else:
+            return img, target
+    
+    def __len__(self):
+        return len(self.annotations)
+
+    def export_annotations(self, result: list):
+        keypoints = []
+        bbox = []
+        pillars = [object for object in result if object['type']=='rectanglelabels']
+        corners = [object for object in result if object['type']=='keypointlabels']
+
+        for pillar in pillars:
+            original_w = pillar['original_width']
+            original_h = pillar['original_height']
+            value = pillar['value']
+            
+            x, y = value['x'] / 100 * original_w, value['y'] / 100 * original_h
+            w, h = value['width'] / 100 * original_w, value['height'] / 100 * original_h
+            bbox.append([int(x), int(y), int(x + w), int(y + h)])
+            
+            id = pillar['id']
+            pillar_corners = []
+            for corner in corners:
+                if corner['parentID'] == id:
+                    value = corner['value']
+
+                    x, y = value['x'] / 100 * original_w, value['y'] / 100 * original_h
+                    pillar_corners.append([int(x), int(y), 1])
+
+            assert len(pillar_corners) != 0, f'Wrong convert. No keypoints at task with {self.inner_id=}'
+            keypoints.append(pillar_corners)
+
+        return keypoints, bbox
+
+    def get_image(self, d: dict):
+        assert 'data' in d, f'No image data. {self.inner_id=}'
+        assert 'image' in d['data'], f'No image data. {self.inner_id=}'
+        return d['data']['image'].split('-')[-1]
+    
+    @property
+    def explore(self):
+        from collections import defaultdict
+        
+        nums_of_pillars = []
+        corners_against_pillars = defaultdict(int)
+        annotations_without_pillars = []
+        annotations_with_cornerless_pillars = []
+        annotations_with_errors = []
+
+        print(f'Lenght of dataset is: {self.__len__()}')
+
+        for idx, annotation in enumerate(self.annotations):
+
+            assert 'inner_id' in annotation, f'No inner id at item {idx}'
+            inner_id = annotation['inner_id']
+        
+            if 'annotations' not in annotation: 
+                annotations_with_errors.append(inner_id)
+                continue
+            if 'result' not in annotation['annotations'][0]: 
+                annotations_with_errors.append(inner_id)
+                continue
+                
+            pillars_number = 0
+            result = annotation['annotations'][0]['result']
+
+            if len(result) == 0:
+                annotations_with_errors.append(inner_id)
+                continue
+            
+            pillars = [object for object in result if object['type']=='rectanglelabels']
+            corners = [object for object in result if object['type']=='keypointlabels']
+
+            num_pillars = len(pillars)
+
+            if num_pillars == 0:
+                annotations_without_pillars.append(inner_id)
+            nums_of_pillars.append(num_pillars)
+
+            for pillar in pillars:
+                id = pillar['id']
+                try:
+                    pillar_corners = [corner for corner in corners if corner['parentID']==id]
+                except:
+                    annotations_with_errors.append(inner_id)
+                num_corners = len(pillar_corners)
+                    
+                if num_corners == 0:
+                    annotations_with_cornerless_pillars.append(inner_id)
+                corners_against_pillars[num_corners] += 1
+
+        sns.set_theme()
+
+        self.max_corners = max(list(corners_against_pillars.keys()))
+
+        print(f'Maximum number of corners per pillar is: {self.max_corners}')
+
+        NPillars_hist = sns.histplot(nums_of_pillars, discrete=True, kde=False, stat='percent')
+        NPillars_hist.set_title('Number of pillars on pictures')
+        NPillars_hist.set_xlabel('Number of pillars per picture')
+        NPillars_hist.set_ylabel('Percent of images')
+        NPillars_hist.set(xticks=np.arange(1,max(nums_of_pillars)+1,1))
+        for container in NPillars_hist.containers:
+            NPillars_hist.bar_label(container, fontsize=10)
+
+        plt.show()
+
+        pillars_corners = sns.barplot(x=list(corners_against_pillars.keys()), y=list(corners_against_pillars.values()))
+        pillars_corners.bar_label(pillars_corners.containers[0], fontsize=10)
+        pillars_corners.set_title('Pillars with different number of visible corners')
+        pillars_corners.set_ylabel('Number of Pillars')
+        plt.show()
+
+        if annotations_without_pillars:
+            print('Annotations without pillars:\n')
+            print(*annotations_without_pillars)
+
+        if annotations_with_cornerless_pillars:
+            print('\nAnnotations with cornerless pilars:\n')
+            print(*annotations_with_cornerless_pillars)
+
+        if annotations_with_errors:
+            print('\nAnnotations with errors:\n')
+            print(*set(annotations_with_errors))
 
 
 
