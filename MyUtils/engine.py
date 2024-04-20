@@ -28,7 +28,23 @@ def train_one_epoch(model, optimizer, data_loader, device, epoch, print_freq):
         images = list(image.to(device) for image in images)
         targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
 
-        loss_dict = model(images, targets)
+        try:
+
+            loss_dict = model(images, targets)
+
+        except KeyboardInterrupt:
+            
+            raise
+            
+        except:
+            print(f'Error at tasks {[target["task_id"] for target in targets]}!')
+            for target in targets:
+                print(f'Masks shapes for task {target["task_id"]} ({target["image_id"]}) is:')
+                for mask in target['masks']:
+                    print(f'\t{mask.shape}')
+
+        finally:
+            loss_dict = model(images, targets)
 
         losses = sum(loss for loss in loss_dict.values())
 

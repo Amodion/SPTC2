@@ -1,6 +1,8 @@
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset
 from torchvision.transforms import functional as F
+from torchvision.io import read_image
+from torchvision.ops import masks_to_boxes
 import os
 import json
 import cv2
@@ -8,6 +10,7 @@ import copy
 import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
+import pandas as pd
 
 class NCornerDataset(Dataset):
     def __init__(self, root, N, transform=None, demo=False, corners=None):
@@ -404,6 +407,10 @@ class PillarsDataset(Dataset):
         assert 'data' in d, f'No image data. {self.inner_id=}'
         assert 'image' in d['data'], f'No image data. {self.inner_id=}'
         return d['data']['image'].split('-')[-1]
+
+    def get_max_corners(self):
+        assert self.max_corners is not None, 'Max number of corners per pillar is unknown! Please, use dataset.explore first to find it.'
+        return self.max_corners
     
     @property
     def explore(self):
@@ -491,7 +498,68 @@ class PillarsDataset(Dataset):
             print('\nAnnotations with errors:\n')
             print(*set(annotations_with_errors))
 
+class RoadsDataset(Dataset):
+    def __init__(self, root, class_index=None, transform=None, demo=False):
+        self.root = root
+        self.transform = transform
+        self.demo = demo # Use demo=True if you need transformed and original images (for example, for visualization purposes)
+        self.annotations = pd.read_json(self.root + 'annotations.json', orient='records')
+        self.class_index = class_index
+        assert self.class_index is not None, 'Class index is not specified!'
+        assert len(self.annotations) != 0, 'Annotations file empty!'
 
+    def __getitem__(self, idx):
+        annotation = self.annotations.iloc[idx]
+        image_path = annotation['image']
+        image_path = self.root + 'images/' +'-'.join(image_path.split('-')[1:])
+        id = annotation['id']
+
+        masks_original = [np.load(self.root + 'masks/' + mask) for mask in os.listdir(self.root + 'masks/') if f'task-{id}' in mask]
+        masks_original = [np.where(mask > 0, 1, mask) for mask in masks_original]
+        masks_original = np.array(masks_original)
+
+        assert len(masks_original) != 0, f'No masks loaded for task {id}'
+
+        objects_original = [mask.split('-')[-2] for mask in os.listdir(self.root + 'masks/') if f'task-{id}' in mask]
+        
+        boxes_original = masks_to_boxes(torch.tensor(masks_original, dtype=torch.uint8)).detach().cpu().numpy()
+
+        image_original = cv2.imread(image_path)
+        image_original = cv2.cvtColor(image_original, cv2.COLOR_BGR2RGB)
+
+        if self.transform:
+            transformed = self.transform(image=image_original, bboxes=boxes_original, masks=masks_original, class_labels=objects_original)
+            
+            image = transformed['image']
+            
+            masks = np.array([mask for mask in transformed['masks'] if np.any(mask)]) # remove empty masks
+            
+            boxes = masks_to_boxes(torch.tensor(masks, dtype=torch.uint8)).detach().cpu().numpy()
+                
+            objects = [label for label, mask in zip(transformed['class_labels'], transformed['masks']) if np.any(mask)]
+        else:
+            image, boxes, masks, objects = image_original, boxes_original, masks_original, objects_original
+
+        image = F.to_tensor(image)
+        boxes = torch.tensor(boxes, dtype=torch.float32)
+        masks = torch.tensor(masks, dtype=torch.uint8)
+        labels = torch.tensor([self.class_index[obj] for obj in objects], dtype=torch.int64)
+
+        assert len(masks) != 0, f'No masks loaded for task {id}'
+
+        target = {}
+        target["boxes"] = boxes
+        target["labels"] = labels
+        target["image_id"] = torch.tensor([idx])
+        target["task_id"] = torch.tensor([id])
+        target["area"] = (boxes[:, 3] - boxes[:, 1]) * (boxes[:, 2] - boxes[:, 0])
+        target["iscrowd"] = torch.zeros(len(boxes), dtype=torch.int64)
+        target["masks"] = masks
+
+        return image, target
+
+    def __len__(self):
+        return len(self.annotations)
 
 
 
