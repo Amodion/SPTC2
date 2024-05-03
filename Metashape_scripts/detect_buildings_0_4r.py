@@ -20,11 +20,10 @@ from albumentations import RandomBrightnessContrast, InvertImg, Sharpen, Compose
 class DetectObjectsDlg(QtWidgets.QDialog):
 
     def __init__(self, parent):
-        
+
+        self.group_label = 'Обнаруженные здания'
         self.kps_group_label = 'Обнаруженные точки'
         
-        
-
         if len(Metashape.app.document.path) > 0:
             self.working_dir = str(pathlib.Path(Metashape.app.document.path).parent)
         else:
@@ -36,7 +35,7 @@ class DetectObjectsDlg(QtWidgets.QDialog):
             
         self.current_image = ''
         
-        self.ortho_path = ''
+        self.ortho_path = self.working_dir + '/Orthomosaic/'
         self.do_export_ortho = False
         self.do_filter_points = True
         self.do_detect_buildings = True
@@ -57,7 +56,7 @@ class DetectObjectsDlg(QtWidgets.QDialog):
         
         self.chunk = Metashape.app.document.chunk
         self.ortho_crs = self.chunk.orthomosaic.crs
-        self.num_keypoints = 2
+        self.num_keypoints = 3
 
         QtWidgets.QDialog.__init__(self, parent)
         self.setWindowTitle(f"Поиск точек на ортофотоплане (Metashape version: {self.major_version})")
@@ -291,7 +290,6 @@ class DetectObjectsDlg(QtWidgets.QDialog):
         shape.vertices = [coordinates]
         shape.has_z = True
     
-
     def get_object_detection_model(self, num_classes):
         from torch import nn
         import torchvision
@@ -335,7 +333,7 @@ class DetectObjectsDlg(QtWidgets.QDialog):
         import cv2
         from torchvision.utils import draw_bounding_boxes, save_image
         
-        model_kps = self.get_model_kps()
+        model_kps = self.get_model_kps_V2()
         
         classes = {'Building': 1}
         inv_classes = {value:key for key, value in classes.items()}    
@@ -619,7 +617,102 @@ class DetectObjectsDlg(QtWidgets.QDialog):
         print('Model loaded')
         time_start = time.time()
         self.predict_images(model=model)
+
+    def detect_buildings_Patch_mode(self):
+        #Create folder for export ortho
+        pathlib.Path(self.ortho_path).mkdir(parents=True, exist_ok=True)
         
+        self.export_ortho()
+
+        self.predict_buildings()
+
+        self.treat_buildings()
+
+    def predict_buildings(self):
+        model = self.load_model()
+        app = QtWidgets.QApplication.instance()
+        
+        classes = {'Building': 1}
+        inv_classes = {value:key for key, value in classes.items()}    
+        model.to(self.device)
+        
+        for num, image_name in enumerate([file for file in os.listdir(self.ortho_path) if not file.endswith('.tfw')]): #Iterate over orthophotos ignoring world files
+            world_file_path = self.ortho_path + image_name[:-4] + '.tfw'
+            try:
+                image = cv2.imdecode(np.fromfile(self.ortho_path + image_name, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
+                image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            except:
+                print(f'Existing/cv2 error at image: {image_name}')
+                continue
+            transform = self.eval_transform()        
+            model.eval()       
+            
+            x = transform(image=image)       
+            x = x['image']        
+            x.to(self.device)        
+            predictions = model([x,])        
+            pred = predictions[0]
+            
+            scores_valid = pred['scores'] > 0.95 # filter out bad predictions
+            
+            target = {}
+            target['boxes'] = pred['boxes'][scores_valid]
+            target['labels'] = pred['labels'][scores_valid]
+            target['scores'] = pred['scores'][scores_valid]
+            target = {key: value.to(torch.device('cpu')) for key, value in target.items()}
+            
+            df = pd.DataFrame(data=pred['boxes'], columns=['xmin', 'ymin', 'xmax', 'ymax'])
+            df['label'] = [inv_classes[label.item()] + f': {round(score.item(), 2)}' for label, score in zip(target['labels'], target['scores'])]
+            
+            self.add_buildings(world_file_path=world_file_path, predictions=df)
+
+    def draw_shape(self, label: str, corners: list):
+        '''
+        Создает на ортофотоплане фигуру полигон с именем 'label', в слое 'group' по координатам узлов в 'corners' (shapes.crs!) 
+        '''
+        if len(coordinates) == 0:
+            print('None in draw point')
+            return None
+        if self.major_version > 1.7:
+            new_shape = self.chunk.shapes.addShape()
+            new_shape.label = label
+            new_shape.group = self.target_group
+            new_shape.geometry = Metashape.Geometry.Polygon(corners)
+        else:   
+            shape = self.chunk.shapes.addShape()
+            shape.label = label
+            shape.type = Metashape.Shape.Type.Polygon
+            shape.group = self.target_group
+            shape.vertices = [coordinates]
+            #shape.has_z = True
+    
+    def add_buildings(self, world_file_path, predictions):
+        '''
+        TODO: Расширять ограничивающие прямоугольники путем добавления констант к координатам углов? Что бы область для поиска углов зданий была больше.
+        '''
+        with open(world_file_path, "r") as file:
+            matrix2x3 = list(map(float, file.readlines()))
+        matrix2x3 = np.array(matrix2x3).reshape(3, 2).T
+        for row in predictions.itertuples():
+            xmin, ymin, xmax, ymax, label = int(row.xmin), int(row.ymin), int(row.xmax), int(row.ymax), row.label
+            corners = []
+            for x, y in [(xmin, ymin), (xmax, ymin), (xmax, ymax), (xmin, ymax)]:
+                x, y = matrix2x3 @ np.array([x, y, 1]).reshape(3, 1)
+                p = Metashape.Vector([x, y])
+                p = Metashape.CoordinateSystem.transform(p, self.chunk.orthomosaic.crs, self.chunk.shapes.crs)
+                corners.append([p.x, p.y])
+            self.draw_shape(label=label, corners=corners)
+    
+    def treat_buildings(self):
+        pass
+        
+    def export_ortho(self):
+        if not self.ortho_path > 0:
+            raise InterruptedError("Specify path to export orthomosaic!")     
+        self.chunk.exportRaster(path=self.ortho_path + '/ortho.tif', source_data=Metashape.OrthomosaicData, image_format=Metashape.ImageFormat.ImageFormatJPEG, save_alpha=True, white_background=True,
+                                save_world=True,
+                                split_in_blocks=True, block_width=5000, block_height=5000,)
+         
     def format_timedelta(self, td):
         minutes, seconds = divmod(td, 60)
         hours, minutes = divmod(minutes, 60)
@@ -635,6 +728,10 @@ class DetectObjectsDlg(QtWidgets.QDialog):
         try:
             self.stopped = False
 
+            self.target_group = self.chunk.shapes.addGroup()
+            self.target_group.label = self.group_label
+            self.target_group.enabled = False
+            
             self.target_group_kps = self.chunk.shapes.addGroup()
             self.target_group_kps.label = self.kps_group_label
             self.target_group_kps.enabled = False
