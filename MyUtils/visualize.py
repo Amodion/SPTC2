@@ -66,9 +66,44 @@ def visualize(image, bboxes, keypoints, image_original=None, bboxes_original=Non
             cv2.imwrite(save_path, cv2.cvtColor(image_original, cv2.COLOR_RGB2BGR))
 
 
-def visualize_masks(image: torch.Tensor, target: dict = None, inv_classes: dict = None, alpha: float = 0.7, obj_colors: dict = None, show: bool = False, save_path: str = None, mask_threshhold: float = 0.5):
+def visualise_tensor(image, final_target, path):
+    image = image.detach().cpu().numpy()
+    image = image.transpose(1,2,0) * 255
+    image = image.astype(np.uint8)
+    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
+    keypoints = final_target['keypoints'].detach().cpu().numpy()
+    scores = final_target['keypoints_scores'].detach().cpu().numpy()
+    boxes = final_target['boxes'].detach().cpu().numpy()
+
+    keypoints = [list(map(int, keypoint)) for keypoint in keypoints]
+    scores = [round(score, 2) for score in scores]
+    boxes = [list(map(int, box)) for box in boxes]
+
+    for num, box in enumerate(boxes):
+        start_point = (box[0], box[1])
+        end_point = (box[2], box[3])
+        image = cv2.rectangle(image.copy(), start_point, end_point, (0,255,0), 1)
+        image = cv2.putText(image.copy(), ' Building', start_point, cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255,0), 2, cv2.LINE_AA)
+
+    radius = 2 + 2*int(image.shape[0] > 700) + 2*int(image.shape[1] > 700)
+    colors = {0: (255, 0, 0), 1: (0, 0, 255)} # FOR SOME REASON POINTS APPEARS BLUE
+    
+    for point, score in zip(keypoints, scores):
+        image = cv2.circle(image.copy(), tuple(point[:2]), radius, colors[int(point[2])], -1)
+        image = cv2.putText(image.copy(), ' ' + str(score), tuple(point[:2]), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,0,255), 1, cv2.LINE_AA)
+
+    cv2.imwrite(path, image)
+
+def visualize_masks(image: torch.Tensor, target: dict = None, inv_classes: dict = None, alpha: float = 0.7, obj_colors: dict = None, show: bool = False, save_path: str = None, mask_threshold: float = 0.5):
     '''
-    error: OpenCV(4.8.0) D:\a\opencv-python\opencv-python\opencv\modules\imgcodecs\src\loadsave.cpp:696: error: (-2:Unspecified error) could not find a writer for the specified extension in function 'cv::imwrite_'
+    Function to draw image with segmentation mask and boxes from model prediction output either from dataset. Also it can draw only image if only image given.
+    Expects an image float tensor in [0.0, 1.0] range and target dict with "masks", "boxes" and "labels" fields. 
+    inv_classes is a dict where keys is integers started from 0 and values is classes labels.
+    obj_colors is a dict where keys is classes labels and values is tuples of int for colors in format (R, G, B).
+    alpha is a transparacy value in range [0.0, 1.0] for masks on images where 0 is fully invisible.
+    If show is given as True output image will be shown in notebook, otherwise save_path should be specified to write image on disk.
+    mask_threshold is a value do determine is pixel of mask belongs to the object or not as mask's pixels is given as float in range [0.0, 1.0]
     '''
     font_path = "C:/Users/User/Petr/Net_4/Dataset/TimesNewRomanRegular.ttf"
     
@@ -76,7 +111,7 @@ def visualize_masks(image: torch.Tensor, target: dict = None, inv_classes: dict 
     if target:
 
         if len(target['masks'].shape) == 4:
-            masks = target['masks'] > mask_threshhold
+            masks = target['masks'] > mask_threshold
             masks = masks.squeeze(1)
         else:
             masks = target['masks'].to(dtype=torch.bool)

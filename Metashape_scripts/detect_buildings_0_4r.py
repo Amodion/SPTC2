@@ -15,6 +15,7 @@ import cv2
 import os
 import numpy as np
 from albumentations import RandomBrightnessContrast, InvertImg, Sharpen, Compose, Sequential
+from torchvision.transforms import functional as F
 
 
 class DetectObjectsDlg(QtWidgets.QDialog):
@@ -39,6 +40,7 @@ class DetectObjectsDlg(QtWidgets.QDialog):
         self.do_export_ortho = False
         self.do_filter_points = True
         self.do_detect_buildings = True
+        self.use_path_mode = False
         self.model_path = self.working_dir + '/NN_models/Building_detection_model.pth'
         self.model_kps_default_path = self.working_dir + '/NN_models/Keypoints_detection_model.pth'
         self.model_kps_snow_path = self.working_dir + '/NN_models/Keypoints_detection_model_snow.pth'
@@ -50,13 +52,14 @@ class DetectObjectsDlg(QtWidgets.QDialog):
         
         self.use_snow_model = False
         self.do_visualize = False
+        self.widgets_to_disable = []
         
         self.predicted_points = []
         self.predicted_points_scores = []
         
         self.chunk = Metashape.app.document.chunk
         self.ortho_crs = self.chunk.orthomosaic.crs
-        self.num_keypoints = 3
+        self.num_keypoints = 17
 
         QtWidgets.QDialog.__init__(self, parent)
         self.setWindowTitle(f"Поиск точек на ортофотоплане (Metashape version: {self.major_version})")
@@ -99,10 +102,10 @@ class DetectObjectsDlg(QtWidgets.QDialog):
         self.groupBoxBuildingModelLoad = QtWidgets.QGroupBox("Настройки поиска зданий")
         LoadLayout = QtWidgets.QGridLayout()
         
-        self.checkIfDetectBuildings = QtWidgets.QCheckBox("Искать здания")
-        self.checkIfDetectBuildings.setChecked(self.do_detect_buildings)
-        self.txtDetectBuildings = QtWidgets.QLabel()
-        self.txtDetectBuildings.setText("Если отмечено, будет произведен поиск зданий.")
+        #self.checkIfDetectBuildings = QtWidgets.QCheckBox("Искать здания")
+        #self.checkIfDetectBuildings.setChecked(self.do_detect_buildings)
+        #self.txtDetectBuildings = QtWidgets.QLabel()
+        #self.txtDetectBuildings.setText("Если отмечено, будет произведен поиск зданий.")
         
         self.txtModelLoadPath = QtWidgets.QLabel()
         self.txtModelLoadPath.setText("Путь к модели для поиска зданий:")
@@ -113,6 +116,9 @@ class DetectObjectsDlg(QtWidgets.QDialog):
         self.btnModelLoadPath = QtWidgets.QPushButton("...")
         self.btnModelLoadPath.setFixedSize(25, 25)
         QtCore.QObject.connect(self.btnModelLoadPath, QtCore.SIGNAL("clicked()"), lambda: self.choose_building_model_load_path())
+
+        self.widgets_to_disable.append(self.edtModelLoadPath)
+        self.widgets_to_disable.append(self.btnModelLoadPath)
 
         self.groupBoxBuildingModelLoad.setLayout(LoadLayout)
         
@@ -128,6 +134,9 @@ class DetectObjectsDlg(QtWidgets.QDialog):
         self.btnKPSModelLoadPath = QtWidgets.QPushButton("...")
         self.btnKPSModelLoadPath.setFixedSize(25, 25)
         QtCore.QObject.connect(self.btnKPSModelLoadPath, QtCore.SIGNAL("clicked()"), lambda: self.choose_points_model_load_path())
+
+        self.widgets_to_disable.append(self.edtKPSModelLoadPath)
+        self.widgets_to_disable.append(self.btnKPSModelLoadPath)
         
         self.txtKPSModelSnowLoadPath = QtWidgets.QLabel()
         self.txtKPSModelSnowLoadPath.setText("Путь к зимней модели для поиска точек:")
@@ -138,10 +147,15 @@ class DetectObjectsDlg(QtWidgets.QDialog):
         self.btnKPSModelSnowLoadPath = QtWidgets.QPushButton("...")
         self.btnKPSModelSnowLoadPath.setFixedSize(25, 25)
         QtCore.QObject.connect(self.btnKPSModelSnowLoadPath, QtCore.SIGNAL("clicked()"), lambda: self.choose_points_snow_model_load_path())
+
+        self.widgets_to_disable.append(self.edtKPSModelSnowLoadPath)
+        self.widgets_to_disable.append(self.btnKPSModelSnowLoadPath)
         
         self.checkIfVisualize = QtWidgets.QCheckBox("Записывать предсказания на фото")
         self.checkIfVisualize.setToolTip("Записывать предсказания модели на фото зданий в отдельную папку")
         self.checkIfVisualize.setChecked(self.do_visualize)
+
+        self.widgets_to_disable.append(self.checkIfVisualize)
         
         self.checkIfUseSnowModel = QtWidgets.QCheckBox("Использовать модель для зимы (BETA)")
         self.checkIfUseSnowModel.setToolTip("Использовать, если съемка проводилась в зимнее время")
@@ -150,6 +164,7 @@ class DetectObjectsDlg(QtWidgets.QDialog):
         
         self.checkIfFilterPoints = QtWidgets.QCheckBox("Фильтровать точки")
         self.checkIfFilterPoints.setChecked(self.do_filter_points)
+        self.widgets_to_disable.append(self.checkIfFilterPoints)
         
         self.fill= QtWidgets.QLabel()
         self.fill.setText("                                                            .                                                                             ")
@@ -158,11 +173,13 @@ class DetectObjectsDlg(QtWidgets.QDialog):
         self.combo.addItem('Weighted')
         self.combo.addItem('Mean')
         self.combo.addItem('Max')
+        self.widgets_to_disable.append(self.combo)
         
         self.filterKPSdistance = QtWidgets.QLineEdit()
         self.filterKPSdistance.setText('0.5')
         self.filterKPSdistance.setPlaceholderText("[0.1, 1]")
         self.filterKPSdistance.setToolTip("Расстояние фильтрации")
+        self.widgets_to_disable.append(self.filterKPSdistance)
         
         
         
@@ -175,6 +192,15 @@ class DetectObjectsDlg(QtWidgets.QDialog):
         self.KPSconfidance = QtWidgets.QLineEdit()
         self.KPSconfidance.setText('10.0')
         self.KPSconfidance.setToolTip("Уровень уверенности точек")
+        self.widgets_to_disable.append(self.KPSconfidance)
+
+        self.checkIfUsepathcMode = QtWidgets.QCheckBox("Использовать метод патчей")
+        self.checkIfUsepathcMode.setChecked(self.use_path_mode)
+        self.txtUsepathcMode = QtWidgets.QLabel()
+        self.txtUsepathcMode.setText("Использовать метод патчей для поиска точек.")
+        self.widgets_to_disable.append(self.checkIfUsepathcMode)
+
+        
         
         
         KPSLoadLayout.addWidget(self.txtModelLoadPath, 0, 0)
@@ -205,11 +231,14 @@ class DetectObjectsDlg(QtWidgets.QDialog):
         KPSLoadLayout.addWidget(self.KPSconfidanceText, 6, 0)
         
         KPSLoadLayout.addWidget(self.KPSconfidance, 6, 1)
+
+        KPSLoadLayout.addWidget(self.checkIfUsepathcMode, 7, 0)
         
 
         self.groupBoxKPSModelLoad.setLayout(KPSLoadLayout)
 
         self.btnRun = QtWidgets.QPushButton(f"Пуск (Используется {self.device})")
+        self.widgets_to_disable.append(self.btnRun)
         self.btnStop = QtWidgets.QPushButton("Стоп")
         self.btnStop.setEnabled(False)
 
@@ -278,6 +307,7 @@ class DetectObjectsDlg(QtWidgets.QDialog):
         new_shape.label = label
         new_shape.group = self.target_group_kps
         new_shape.geometry = Metashape.Geometry.Point(coordinates)
+        #new_shape.is_attached = True
 
     def draw_shape_point_1_6(self, label: str, coordinates: Metashape.Vector):
         if len(coordinates) == 0:
@@ -288,6 +318,7 @@ class DetectObjectsDlg(QtWidgets.QDialog):
         shape.type = Metashape.Shape.Type.Point
         shape.group = self.target_group_kps
         shape.vertices = [coordinates]
+        #shape.is_attached = True
         shape.has_z = True
     
     def get_object_detection_model(self, num_classes):
@@ -473,15 +504,22 @@ class DetectObjectsDlg(QtWidgets.QDialog):
         return points, kps_scores
     
     def extract_points(self):
+        if self.do_use_patchmode and (not self.do_visualize):
+            self.del_misc(pathlib.Path(self.working_dir + '/Patches/'))
+        if not len(self.predicted_points):
+            print('No points detected')
+            return None
+        print(f'Extracting points. Number of detected points is: {len(self.predicted_points)}')
         predicted_points = self.predicted_points
         scores = self.predicted_points_scores
         if self.do_filter_points:
             time_filter = time.time()
             predicted_points, scores = self.filter_points(self.predicted_points, self.predicted_points_scores)
             print(f'Points filtered for {round(time.time() - time_filter, 2)} sec. Method: {self.combo.currentText()}')
+            print(f'Number of points after filtering is: {len(predicted_points)}')
         else:
             print('No filter applyied')
-        print(len(predicted_points), len(scores))
+        #print(len(predicted_points), len(scores))
         for point, score in zip(predicted_points, scores):
             score = round(float(score), 2)
             if self.major_version > 1.7:
@@ -579,8 +617,8 @@ class DetectObjectsDlg(QtWidgets.QDialog):
 
     def weighted_average(self, points):
         import numpy as np
-        xyz = [[point[0], point[1], point[2]] for point in points]
-        weights = [score[3] for score in points]
+        xyz = [point[:-1] for point in points]
+        weights = [score[-1] for score in points]
         average = np.average(xyz, axis=0, weights=weights).tolist()
         weights = np.mean(weights).tolist()
         average.append(weights)
@@ -591,15 +629,19 @@ class DetectObjectsDlg(QtWidgets.QDialog):
         return tuple(np.mean(points, axis=0).tolist())
 
     def max_point(self, points):
-        return max(points, key=lambda x: x[3])
+        return max(points, key=lambda x: x[-1])
 
     def is_close(self, point1, point2):
         self.close_distance = float(self.filterKPSdistance.text())
         return (abs(point1[0] - point2[0]) < self.close_distance) and (abs(point1[1] - point2[1]) < self.close_distance)
 
     def filter_points(self, points: Metashape.Vector, scores):
-    
-        points_tuple = [(point.x, point.y, point.z, score) for point, score in zip(points, scores)]
+        print('Start filtering points...')
+        #print(len(points), len(scores))
+        if not self.do_use_patchmode:
+            points_tuple = [(point.x, point.y, point.z, score) for point, score in zip(points, scores)]
+        else:
+            points_tuple = [(point.x, point.y, score) for point, score in zip(points, scores)]
         final_points = set()
     
         for point in points_tuple:
@@ -608,7 +650,8 @@ class DetectObjectsDlg(QtWidgets.QDialog):
             if len(filtered_points) >= 1:
                 final_points.add(self.filter_method(list(filtered_points)))
         
-        filtered_vectors = ([Metashape.Vector([point[0], point[1], point[2]]) for point in list(final_points)], [point[3] for point in list(final_points)])
+        #print(len(final_points))
+        filtered_vectors = ([Metashape.Vector(point[:-1]) for point in list(final_points)], [point[-1] for point in list(final_points)])
         return filtered_vectors
 
     
@@ -618,14 +661,19 @@ class DetectObjectsDlg(QtWidgets.QDialog):
         time_start = time.time()
         self.predict_images(model=model)
 
+    def buildings_exists(self):
+        return (self.group_label in [group.label for group in self.chunk.shapes.groups])
+
     def detect_buildings_Patch_mode(self):
         #Create folder for export ortho
-        pathlib.Path(self.ortho_path).mkdir(parents=True, exist_ok=True)
-        
-        self.export_ortho()
 
-        self.predict_buildings()
-
+        if self.do_detect_buildings:
+            pathlib.Path(self.ortho_path).mkdir(parents=True, exist_ok=True)
+            self.export_ortho()
+            self.predict_buildings()
+        else:
+            print('Обнаружен слой со зданиями. Поиск проводится на основе этого слоя.')
+            
         self.treat_buildings()
 
     def predict_buildings(self):
@@ -635,8 +683,10 @@ class DetectObjectsDlg(QtWidgets.QDialog):
         classes = {'Building': 1}
         inv_classes = {value:key for key, value in classes.items()}    
         model.to(self.device)
+
+        orthodata = [file for file in os.listdir(self.ortho_path) if not file.endswith('.tfw')]
         
-        for num, image_name in enumerate([file for file in os.listdir(self.ortho_path) if not file.endswith('.tfw')]): #Iterate over orthophotos ignoring world files
+        for num, image_name in enumerate(orthodata): #Iterate over orthophotos ignoring world files
             world_file_path = self.ortho_path + image_name[:-4] + '.tfw'
             try:
                 image = cv2.imdecode(np.fromfile(self.ortho_path + image_name, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
@@ -648,8 +698,8 @@ class DetectObjectsDlg(QtWidgets.QDialog):
             model.eval()       
             
             x = transform(image=image)       
-            x = x['image']        
-            x.to(self.device)        
+            x = x['image']
+            x = x[:3, ...].to(self.device) # RGBA -> RGB 
             predictions = model([x,])        
             pred = predictions[0]
             
@@ -659,18 +709,213 @@ class DetectObjectsDlg(QtWidgets.QDialog):
             target['boxes'] = pred['boxes'][scores_valid]
             target['labels'] = pred['labels'][scores_valid]
             target['scores'] = pred['scores'][scores_valid]
-            target = {key: value.to(torch.device('cpu')) for key, value in target.items()}
             
-            df = pd.DataFrame(data=pred['boxes'], columns=['xmin', 'ymin', 'xmax', 'ymax'])
+            target = {key: value.detach().cpu().numpy() for key, value in target.items()}
+            
+            df = pd.DataFrame(data=target['boxes'], columns=['xmin', 'ymin', 'xmax', 'ymax'])
             df['label'] = [inv_classes[label.item()] + f': {round(score.item(), 2)}' for label, score in zip(target['labels'], target['scores'])]
             
             self.add_buildings(world_file_path=world_file_path, predictions=df)
 
+            self.detectionPBar.setValue((num + 1) * 100 / len(orthodata))
+            Metashape.app.update()
+            app.processEvents()
+            self.check_stopped()
+
+    def treat_buildings(self):
+        app = QtWidgets.QApplication.instance()
+
+        kps_model = self.get_model_kps_V2()
+        
+        T = self.chunk.transform.matrix
+        crs = self.chunk.crs
+        shapes = list(filter(self.filter_polygons, self.chunk.shapes))
+        patch_path = self.working_dir + '/Patches/'
+        pathlib.Path(patch_path).mkdir(parents=True, exist_ok=True)
+        
+        for num, shape in enumerate(shapes):
+            shape_points = []
+            shape_points_scores = []
+            self.get_images_from_shape(shape=shape, path=patch_path)
+            for image in [image for image in os.listdir(patch_path + str(shape.key)) if (not image.endswith('.jgw')) and (not 'pred' in image)]:
+                points, scores = self.predict_points_patch(model=kps_model, path=patch_path+str(shape.key)+'/'+image)
+                if points is None:
+                    continue
+                shape_points.extend(points)
+                shape_points_scores.extend(scores)
+            
+            #if self.do_filter_points:
+            #    shape_points, shape_points_scores = self.filter_points(shape_points, shape_points_scores)
+
+            self.predicted_points.extend(shape_points)
+            self.predicted_points_scores.extend(shape_points_scores)
+
+            self.detectionKPSPBar.setValue((num + 1) * 100 / len(shapes))
+            Metashape.app.update()
+            app.processEvents()
+            self.check_stopped()
+
+        self.extract_points()
+
+    def predict_points_patch(self, model, path):
+        world_file_path = path[:-4] + '.jgw'
+        try:
+            image = cv2.imdecode(np.fromfile(path, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
+            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        except:
+            print(f'Existing/cv2 error at image: {image_name}')
+            return None, None
+
+        image = F.to_tensor(image)
+        image.to(self.device)
+
+        model.eval()
+
+        predictions = model([image])[0]
+
+        scores_valid = predictions['scores'] > 0.95
+        target = {}
+        target['boxes'] = predictions['boxes'][scores_valid]
+        target['scores'] = predictions['scores'][scores_valid]
+        target['labels'] = predictions['labels'][scores_valid]
+        target['keypoints'] = predictions['keypoints'][scores_valid]
+        target['keypoints_scores'] = predictions['keypoints_scores'][scores_valid]
+
+        final_target = {}
+        final_target['boxes'] = target['boxes']
+        final_target['scores'] = target['scores']
+        final_target['labels'] = target['labels']
+
+        valid_kps = target['keypoints_scores'][:] > self.points_confidance
+        final_target['keypoints'] = target['keypoints'][valid_kps]
+        final_target['keypoints_scores'] = target['keypoints_scores'][valid_kps]
+
+        keypoints = final_target['keypoints'].detach().cpu().numpy()
+        scores = final_target['keypoints_scores'].detach().cpu().numpy()
+
+        keypoints = [list(keypoint) for keypoint in keypoints] # DO I HAVE TO CONVERT POINTS TO INT?
+        scores = [round(score, 2) for score in scores]
+
+        if self.do_visualize:
+            save_path = path[:-4] + '_pred.jpg'
+            self.visualise_patch(image, final_target, save_path)
+
+        with open(world_file_path, "r") as file:
+            matrix2x3 = list(map(float, file.readlines()))
+        matrix2x3 = np.array(matrix2x3).reshape(3, 2).T
+
+        points = []
+
+        print(f'{len(keypoints)} keypoints found for image {path}:')
+
+        for point, score in zip(keypoints, scores):
+            x, y = point[:2]
+            x, y = matrix2x3 @ np.array([x, y, 1]).reshape(3, 1)
+            p = Metashape.Vector([x, y])
+            p = Metashape.CoordinateSystem.transform(p, self.chunk.orthomosaic.crs, self.chunk.shapes.crs)
+            print(f'\t{p}')
+            points.append(p)
+
+        return points, scores
+    
+    def visualise_patch(self, image, final_target, path):
+        image = image.detach().cpu().numpy()
+        image = image.transpose(1,2,0) * 255
+        image = image.astype(np.uint8)
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
+        keypoints = final_target['keypoints'].detach().cpu().numpy()
+        scores = final_target['keypoints_scores'].detach().cpu().numpy()
+        boxes = final_target['boxes'].detach().cpu().numpy()
+
+        keypoints = [list(map(int, keypoint)) for keypoint in keypoints]
+        scores = [round(score, 2) for score in scores]
+        boxes = [list(map(int, box)) for box in boxes]
+
+        for num, box in enumerate(boxes):
+            start_point = (box[0], box[1])
+            end_point = (box[2], box[3])
+            image = cv2.rectangle(image.copy(), start_point, end_point, (0,255,0), 1)
+            image = cv2.putText(image.copy(), ' Building', start_point, cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255,0), 2, cv2.LINE_AA)
+
+        radius = 2 + 2*int(image.shape[0] > 700) + 2*int(image.shape[1] > 700)
+        colors = {0: (255, 0, 0), 1: (0, 0, 255)} # FOR SOME REASON POINTS APPEARS BLUE
+    
+        for point, score in zip(keypoints, scores):
+            image = cv2.circle(image.copy(), tuple(point[:2]), radius, colors[int(point[2])], -1)
+            image = cv2.putText(image.copy(), ' ' + str(score), tuple(point[:2]), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,0,255), 1, cv2.LINE_AA)
+
+        cv2.imwrite(path, image)
+        
+    
+    def export_shape_image(self, shape, label):
+        coordinates = shape.geometry.coordinates[0]
+        new_p = []
+        for x, y in coordinates:
+            t = Metashape.Vector([x, y])
+            pair = Metashape.CoordinateSystem.transform(t, self.chunk.shapes.crs, self.chunk.orthomosaic.crs)
+            pair = Metashape.Vector([round(val, 6) for val in pair])
+            new_p.append(pair)
+        s_min = new_p[3]
+        s_max = new_p[1]
+        box = Metashape.BBox()
+        box.min = s_min
+        box.max = s_max
+        self.chunk.exportRaster(path=f"{label}.jpg", source_data=Metashape.OrthomosaicData, image_format=Metashape.ImageFormat.ImageFormatJPEG, save_alpha=True, white_background=True,
+                                save_world=True,
+                                split_in_blocks=False,
+                                region=box)
+    
+    def get_images_from_shape(self, shape, path):
+        cameras = self.get_overlaping_images_V2(shape)
+        for camera in cameras:
+            key = camera.key
+            patch = Metashape.Orthomosaic.Patch()
+            patch.image_keys = [key]
+            self.chunk.orthomosaic.patches[shape] = patch
+            try:
+                self.chunk.orthomosaic.update()
+            except KeyboardInterrupt:
+                self.stop()
+            #label = '_'.join(shape.label.split(':'))
+            pathlib.Path(path + str(shape.key)).mkdir(parents=True, exist_ok=True)
+            #if os.listdir(path + str(shape.key)):
+            #    for file in os.listdir(path + str(shape.key)):
+            #        os.remove(patch_path + str(shape.key) + '/' + file)
+            label = path + str(shape.key) + '/' + str(camera.label)
+            self.export_shape_image(shape, label)
+            self.check_stopped()
+    
+    def filter_polygons(self, shape):
+        if (shape.group.label == self.target_group.label and shape.geometry.type == Metashape.Geometry.PolygonType):
+            return True
+        else:
+            return False
+    
+    def get_overlaping_images_V2(self, shape):
+        '''
+        Returns image keys which overlaps over the input shape.
+        TODO: Figure out how to get specific boundaries for distance
+        '''
+        keys = []
+        for camera in self.chunk.cameras:
+            distance = self.calc_distance_points(self.get_shape_center(shape), camera.reference.location)
+            if 30.0 < distance < 90.0:
+                if not keys:
+                    keys.append(camera.key)
+                else:
+                    if camera.key == keys[-1] + 1:
+                        continue
+                    else:
+                        keys.append(camera.key)  
+        cameras = [camera for camera in self.chunk.cameras if camera.key in keys]
+        return cameras
+    
     def draw_shape(self, label: str, corners: list):
         '''
         Создает на ортофотоплане фигуру полигон с именем 'label', в слое 'group' по координатам узлов в 'corners' (shapes.crs!) 
         '''
-        if len(coordinates) == 0:
+        if len(corners) == 0:
             print('None in draw point')
             return None
         if self.major_version > 1.7:
@@ -683,7 +928,7 @@ class DetectObjectsDlg(QtWidgets.QDialog):
             shape.label = label
             shape.type = Metashape.Shape.Type.Polygon
             shape.group = self.target_group
-            shape.vertices = [coordinates]
+            shape.vertices = corners
             #shape.has_z = True
     
     def add_buildings(self, world_file_path, predictions):
@@ -698,21 +943,36 @@ class DetectObjectsDlg(QtWidgets.QDialog):
             corners = []
             for x, y in [(xmin, ymin), (xmax, ymin), (xmax, ymax), (xmin, ymax)]:
                 x, y = matrix2x3 @ np.array([x, y, 1]).reshape(3, 1)
+                x, y = x[0], y[0]
                 p = Metashape.Vector([x, y])
                 p = Metashape.CoordinateSystem.transform(p, self.chunk.orthomosaic.crs, self.chunk.shapes.crs)
                 corners.append([p.x, p.y])
             self.draw_shape(label=label, corners=corners)
-    
-    def treat_buildings(self):
-        pass
         
     def export_ortho(self):
-        if not self.ortho_path > 0:
-            raise InterruptedError("Specify path to export orthomosaic!")     
-        self.chunk.exportRaster(path=self.ortho_path + '/ortho.tif', source_data=Metashape.OrthomosaicData, image_format=Metashape.ImageFormat.ImageFormatJPEG, save_alpha=True, white_background=True,
-                                save_world=True,
-                                split_in_blocks=True, block_width=5000, block_height=5000,)
+        if not self.ortho_path:
+            raise InterruptedError("Specify path to export orthomosaic!") 
+
+        if len(os.listdir(self.ortho_path)) > 0:
+            print('Orthomosaic already exported. Proceed to predictions.')
+        else:
+            self.chunk.exportRaster(path=self.ortho_path + '/ortho.tif', source_data=Metashape.OrthomosaicData, image_format=Metashape.ImageFormat.ImageFormatTIFF, save_alpha=True, white_background=True,
+                                    save_world=True,
+                                    split_in_blocks=True, block_width=5000, block_height=5000,)
          
+    def get_shape_center(self, shape):
+        coordinates = shape.geometry.coordinates[0]
+        lu_point, ru_point, rd_point, ld_point, *_ = coordinates
+        x_center = lu_point[0] + self.calc_distance_points(lu_point, ru_point) / 2.0
+        y_center = lu_point[1] - self.calc_distance_points(lu_point, ld_point) / 2.0
+        return Metashape.Vector([x_center, y_center])
+    
+    def calc_distance_points(self, point1: Metashape.Vector, point2: Metashape.Vector):
+        import math
+        x1, y1, *_ = point1
+        x2, y2, *_ = point2
+        return math.sqrt((x2-x1)**2 + (y2-y1)**2)
+    
     def format_timedelta(self, td):
         minutes, seconds = divmod(td, 60)
         hours, minutes = divmod(minutes, 60)
@@ -723,28 +983,42 @@ class DetectObjectsDlg(QtWidgets.QDialog):
         message = f"Поиск завершен за {time_total}"
         print(message)
         Metashape.app.messageBox(message)
+
+    def del_misc(self, path):
+        for sub in path.iterdir():
+            if sub.is_dir():
+               self.del_misc(sub)
+            else:
+                sub.unlink()
+        path.rmdir()
             
     def process(self):    
         try:
             self.stopped = False
 
-            self.target_group = self.chunk.shapes.addGroup()
-            self.target_group.label = self.group_label
-            self.target_group.enabled = False
+            if not self.buildings_exists():
+                self.target_group = self.chunk.shapes.addGroup()
+                self.target_group.label = self.group_label
+                self.target_group.enabled = False
+            else:
+                all_groups = {group.label: group for group in self.chunk.shapes.groups}
+                self.target_group = all_groups[self.group_label]
+                self.do_detect_buildings = False
             
             self.target_group_kps = self.chunk.shapes.addGroup()
             self.target_group_kps.label = self.kps_group_label
             self.target_group_kps.enabled = False
 
-            self.btnRun.setEnabled(False)
-            self.combo.setEnabled(False)
+            for widget in self.widgets_to_disable:
+                widget.setEnabled(False)
             self.btnStop.setEnabled(True)
             
             self.do_export_ortho = self.checkIfExportOtho.isChecked()
             self.do_filter_points = self.checkIfFilterPoints.isChecked()
-            self.do_detect_buildings = self.checkIfDetectBuildings.isChecked()
+            #self.do_detect_buildings = self.checkIfDetectBuildings.isChecked()
             self.use_snow_model = self.checkIfUseSnowModel.isChecked()
             self.do_visualize = self.checkIfVisualize.isChecked()
+            self.do_use_patchmode = self.checkIfUsepathcMode.isChecked()
             
             self.filter_methods = {'Weighted': self.weighted_average, 'Mean': self.mean_points, 'Max': self.max_point}
             
@@ -752,7 +1026,7 @@ class DetectObjectsDlg(QtWidgets.QDialog):
             
             self.points_confidance = float(self.KPSconfidance.text())
             
-            if self.do_visualize:
+            if self.do_visualize and not self.do_use_patchmode:
                 pathlib.Path(self.buildings_path).mkdir(parents=True, exist_ok=True)
             
             self.time_start = time.time()
@@ -762,25 +1036,27 @@ class DetectObjectsDlg(QtWidgets.QDialog):
             else:
                 self.model_kps_path = self.model_kps_default_path
             
-            if self.do_detect_buildings:
+            if self.do_use_patchmode:
+                self.detect_buildings_Patch_mode()
+            else:
                 self.detect_buildings()
                 
-
             self.results_time_total = time.time() - self.time_start
 
             self.show_results_dialog()
             
-            self.btnRun.setEnabled(True)
-            self.combo.setEnabled(True)
+            for widget in self.widgets_to_disable:
+                widget.setEnabled(True)
             self.btnStop.setEnabled(False)
         except:
-            self.btnRun.setEnabled(True)
-            self.combo.setEnabled(True)
+            for widget in self.widgets_to_disable:
+                widget.setEnabled(True)
             self.btnStop.setEnabled(False)
             if self.stopped:
                 time_total = self.format_timedelta(time.time() - self.time_start)
                 Metashape.app.messageBox(f"Процесс был остановлен.\nПоиск длился {time_total}")
             else:
+                self.extract_points() # extract points in case of an error.
                 Metashape.app.messageBox("Что-то пошло не так.\n"
                                              "Пожалуйста, проверте консоль.")
                 raise

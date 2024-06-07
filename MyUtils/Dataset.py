@@ -77,7 +77,7 @@ class NCornerDataset(Dataset):
             h, w = img.shape[0], img.shape[1]
             bboxes = transformed['bboxes']
     
-            bboxes = [[max(2, bboxes[0][0]), max(2, bboxes[0][1]), min(w - 2, bboxes[0][2]), min(h - 2, bboxes[0][3])]]
+            #bboxes = [[max(2, bboxes[0][0]), max(2, bboxes[0][1]), min(w - 2, bboxes[0][2]), min(h - 2, bboxes[0][3])]]
 
             # Unflattening list transformed['keypoints']
             # For example, if we have the following list of keypoints for three objects (each object has two keypoints):
@@ -196,7 +196,7 @@ class NCornerDataset(Dataset):
             
             max_points = max(num_p, max_points)
             if num_p == 0:
-                print(annotation['inner_id'])
+                print(f'Zero points at id {annotation["inner_id"]}')
             nums_of_points.append(num_p)
             if num_b > 1:
                 annotations_with_extra_buildings.append((self.get_image(annotation), annotation['inner_id']))
@@ -499,28 +499,40 @@ class PillarsDataset(Dataset):
             print(*set(annotations_with_errors))
 
 class RoadsDataset(Dataset):
-    def __init__(self, root, class_index=None, transform=None, demo=False):
+    def __init__(self, root, class_index=None, transform=None, demo=False, remove_single_class=None):
         self.root = root
         self.transform = transform
         self.demo = demo # Use demo=True if you need transformed and original images (for example, for visualization purposes)
         self.annotations = pd.read_json(self.root + 'annotations.json', orient='records')
+        
+        if remove_single_class:
+            indxs = []
+            for row in self.annotations.iterrows():
+                labels = []
+                for data in row[1].tag:
+                    labels.extend(data['brushlabels'])
+                if remove_single_class not in labels:
+                    indxs.append(row[0])
+            self.annotations = self.annotations.iloc[indxs]
+            self.annotations.reset_index(drop=True, inplace=True)
+            
         self.class_index = class_index
         assert self.class_index is not None, 'Class index is not specified!'
         assert len(self.annotations) != 0, 'Annotations file empty!'
 
     def __getitem__(self, idx):
         annotation = self.annotations.iloc[idx]
-        image_path = annotation['image']
-        image_path = self.root + 'images/' +'-'.join(image_path.split('-')[1:])
+        image_path = annotation['image_path']
+        #image_path = self.root + 'images/' +'-'.join(image_path.split('-')[1:])
         id = annotation['id']
 
-        masks_original = [np.load(self.root + 'masks/' + mask) for mask in os.listdir(self.root + 'masks/') if f'task-{id}' in mask]
+        masks_original = [np.load(mask) for mask in annotation['masks']]
         masks_original = [np.where(mask > 0, 1, mask) for mask in masks_original]
         masks_original = np.array(masks_original)
 
         assert len(masks_original) != 0, f'No masks loaded for task {id}'
 
-        objects_original = [mask.split('-')[-2] for mask in os.listdir(self.root + 'masks/') if f'task-{id}' in mask]
+        objects_original = [mask.split('-')[-2] for mask in annotation['masks']]
         
         boxes_original = masks_to_boxes(torch.tensor(masks_original, dtype=torch.uint8)).detach().cpu().numpy()
 
