@@ -24,6 +24,7 @@ class DetectObjectsDlg(QtWidgets.QDialog):
 
         self.group_label = 'Обнаруженные здания'
         self.kps_group_label = 'Обнаруженные точки'
+        self.roads_group_label = 'Обнаруженные дороги'
         
         if len(Metashape.app.document.path) > 0:
             self.working_dir = str(pathlib.Path(Metashape.app.document.path).parent)
@@ -37,13 +38,16 @@ class DetectObjectsDlg(QtWidgets.QDialog):
         self.current_image = ''
         
         self.ortho_path = self.working_dir + '/Orthomosaic/'
+        self.roads_ortho_path = self.working_dir + '/Orthomosaic_roads/'
         self.do_export_ortho = False
         self.do_filter_points = True
         self.do_detect_buildings = True
+        self.do_detect_roads = False
         self.use_path_mode = False
-        self.model_path = self.working_dir + '/NN_models/Building_detection_model.pth'
-        self.model_kps_default_path = self.working_dir + '/NN_models/Keypoints_detection_model.pth'
-        self.model_kps_snow_path = self.working_dir + '/NN_models/Keypoints_detection_model_snow.pth'
+        self.model_path = 'C:/Users/User/Desktop' + '/NN_models/Building_detection_model.pth'
+        self.model_kps_default_path = 'C:/Users/User/Desktop' + '/NN_models/Keypoints_detection_model.pth'
+        self.model_kps_snow_path = 'C:/Users/User/Desktop' + '/NN_models/Keypoints_detection_model_snow.pth'
+        self.model_mask_path = 'C:/Users/User/Desktop' + '/NN_models/Roads_detection_model.pth'
         
         self.buildings_path = 'C:/Users/User/Desktop/Buildings/'#self.working_dir + '/Buildings/'  C:\Users\User\Desktop\Teobox_Kedrovka_2023-06-06T11.31.53
         
@@ -56,10 +60,14 @@ class DetectObjectsDlg(QtWidgets.QDialog):
         
         self.predicted_points = []
         self.predicted_points_scores = []
+        self.roads_points = []
         
         self.chunk = Metashape.app.document.chunk
         self.ortho_crs = self.chunk.orthomosaic.crs
         self.num_keypoints = 17
+
+        self.roads_threshold = 0.95
+        self.mask_threshold = {1: 0.5, 2: 0.6, 3: 0.1}
 
         QtWidgets.QDialog.__init__(self, parent)
         self.setWindowTitle(f"Поиск точек на ортофотоплане (Metashape version: {self.major_version})")
@@ -150,6 +158,19 @@ class DetectObjectsDlg(QtWidgets.QDialog):
 
         self.widgets_to_disable.append(self.edtKPSModelSnowLoadPath)
         self.widgets_to_disable.append(self.btnKPSModelSnowLoadPath)
+
+        self.txtRoadsModelLoadPath = QtWidgets.QLabel()
+        self.txtRoadsModelLoadPath.setText("Путь к модели для поиска точек дорог:")
+        self.edtRoadsModelLoadPath = QtWidgets.QLineEdit()
+        self.edtRoadsModelLoadPath.setText(self.model_mask_path)
+        self.edtRoadsModelLoadPath.setPlaceholderText("Файл с зимней моделью для поиска точек")
+        self.edtRoadsModelLoadPath.setToolTip("Файл с зимней моделью для поиска точек")
+        self.btnRoadsModelLoadPath = QtWidgets.QPushButton("...")
+        self.btnRoadsModelLoadPath.setFixedSize(25, 25)
+        QtCore.QObject.connect(self.btnRoadsModelLoadPath, QtCore.SIGNAL("clicked()"), lambda: self.choose_roads_model_load_path())
+
+        self.widgets_to_disable.append(self.edtRoadsModelLoadPath)
+        self.widgets_to_disable.append(self.btnRoadsModelLoadPath)
         
         self.checkIfVisualize = QtWidgets.QCheckBox("Записывать предсказания на фото")
         self.checkIfVisualize.setToolTip("Записывать предсказания модели на фото зданий в отдельную папку")
@@ -200,6 +221,18 @@ class DetectObjectsDlg(QtWidgets.QDialog):
         self.txtUsepathcMode.setText("Использовать метод патчей для поиска точек.")
         self.widgets_to_disable.append(self.checkIfUsepathcMode)
 
+        self.checkIfDetectRoads = QtWidgets.QCheckBox("Искать дороги")
+        self.checkIfDetectRoads.setChecked(self.do_detect_roads)
+        self.txtDetectRoads = QtWidgets.QLabel()
+        self.txtDetectRoads.setText("Произвести поиск дорог на ортофотоплане")
+        self.widgets_to_disable.append(self.checkIfDetectRoads)
+
+        self.checkIfDetectBuildings = QtWidgets.QCheckBox("Искать здания")
+        self.checkIfDetectBuildings.setChecked(self.do_detect_buildings)
+        self.txtDetectBuildings = QtWidgets.QLabel()
+        self.txtDetectBuildings.setText("Произвести поиск углов зданий на ортофотоплане")
+        self.widgets_to_disable.append(self.checkIfDetectBuildings)
+
         
         
         
@@ -215,24 +248,30 @@ class DetectObjectsDlg(QtWidgets.QDialog):
         KPSLoadLayout.addWidget(self.txtKPSModelSnowLoadPath, 2, 0)
         KPSLoadLayout.addWidget(self.edtKPSModelSnowLoadPath, 2, 1)
         KPSLoadLayout.addWidget(self.btnKPSModelSnowLoadPath, 2, 2)
-        
-        KPSLoadLayout.addWidget(self.checkIfUseSnowModel, 3, 0)
-        
-        KPSLoadLayout.addWidget(self.checkIfVisualize, 3, 1)
-        
-        KPSLoadLayout.addWidget(self.checkIfFilterPoints, 4, 0)
-        
-        KPSLoadLayout.addWidget(self.filterKPSdistance, 4, 1)
-        
-        KPSLoadLayout.addWidget(self.comboText, 5, 0)
-        
-        KPSLoadLayout.addWidget(self.combo, 5, 1)
-        
-        KPSLoadLayout.addWidget(self.KPSconfidanceText, 6, 0)
-        
-        KPSLoadLayout.addWidget(self.KPSconfidance, 6, 1)
 
-        KPSLoadLayout.addWidget(self.checkIfUsepathcMode, 7, 0)
+        KPSLoadLayout.addWidget(self.txtRoadsModelLoadPath, 3, 0)
+        KPSLoadLayout.addWidget(self.edtRoadsModelLoadPath, 3, 1)
+        KPSLoadLayout.addWidget(self.btnRoadsModelLoadPath, 3, 2)
+        
+        KPSLoadLayout.addWidget(self.checkIfUseSnowModel, 4, 0)
+        
+        KPSLoadLayout.addWidget(self.checkIfVisualize, 4, 1)
+        
+        KPSLoadLayout.addWidget(self.checkIfFilterPoints, 5, 0)
+        
+        KPSLoadLayout.addWidget(self.filterKPSdistance, 5, 1)
+        
+        KPSLoadLayout.addWidget(self.comboText, 6, 0)
+        
+        KPSLoadLayout.addWidget(self.combo, 6, 1)
+        
+        KPSLoadLayout.addWidget(self.KPSconfidanceText, 7, 0)
+        
+        KPSLoadLayout.addWidget(self.KPSconfidance, 7, 1)
+
+        KPSLoadLayout.addWidget(self.checkIfUsepathcMode, 9, 0)
+        KPSLoadLayout.addWidget(self.checkIfDetectRoads, 8, 1)
+        KPSLoadLayout.addWidget(self.checkIfDetectBuildings, 8, 0)
         
 
         self.groupBoxKPSModelLoad.setLayout(KPSLoadLayout)
@@ -293,30 +332,43 @@ class DetectObjectsDlg(QtWidgets.QDialog):
         self.edtKPSModelLoadPath.setText(working_dir)
         self.model_kps_default_path = self.edtKPSModelLoadPath.text()
 
+    def choose_roads_model_load_path(self):
+        working_dir = Metashape.app.getOpenFileName()
+        self.edtRoadsModelLoadPath.setText(working_dir)
+        self.model_mask_path = self.edtRoadsModelLoadPath.text()
+
     def choose_ortho_dir(self):
         working_dir = Metashape.app.getExistingDirectory()
         self.edtWorkingDir.setText(working_dir)
         self.ortho_path = self.edtWorkingDir.text()
 
     
-    def draw_shape_point(self, label: str, coordinates: Metashape.Vector):
+    def draw_shape_point(self, coordinates: Metashape.Vector, label: str = '', roads=False):
         if len(coordinates) == 0:
             print('None in draw point')
             return None
         new_shape = self.chunk.shapes.addShape()
         new_shape.label = label
-        new_shape.group = self.target_group_kps
+        if roads:
+            group = self.roads_group
+        else:
+            group = self.target_group_kps
+        new_shape.group = group
         new_shape.geometry = Metashape.Geometry.Point(coordinates)
         #new_shape.is_attached = True
 
-    def draw_shape_point_1_6(self, label: str, coordinates: Metashape.Vector):
+    def draw_shape_point_1_6(self, coordinates: Metashape.Vector, label: str = '', roads=False):
         if len(coordinates) == 0:
             print('None in draw point')
             return None
         shape = self.chunk.shapes.addShape()
         shape.label = label
         shape.type = Metashape.Shape.Type.Point
-        shape.group = self.target_group_kps
+        if roads:
+            group = self.roads_group
+        else:
+            group = self.target_group_kps
+        shape.group = group
         shape.vertices = [coordinates]
         #shape.is_attached = True
         shape.has_z = True
@@ -506,6 +558,8 @@ class DetectObjectsDlg(QtWidgets.QDialog):
     def extract_points(self):
         if self.do_use_patchmode and (not self.do_visualize):
             self.del_misc(pathlib.Path(self.working_dir + '/Patches/'))
+        if self.do_detect_roads:
+            self.extract_roads_points()
         if not len(self.predicted_points):
             print('No points detected')
             return None
@@ -527,6 +581,14 @@ class DetectObjectsDlg(QtWidgets.QDialog):
             else:
                 self.draw_shape_point_1_6(label=f'Point_{score}', coordinates=point)
 
+    def extract_roads_points(self):
+        #cycle over self.roads_points and calling draw function depending on version
+        for point in self.roads_points:
+            if self.major_version > 1.7:
+                self.draw_shape_point(coordinates=point, roads=True)
+            else:
+                self.draw_shape_point_1_6(coordinates=point, roads=True)
+    
     def cut_score_V2(self, predictions: dict, score_thresh = 0.5):
         new_pred = {'boxes': [], 'labels': [], 'scores': []}
         for box, label, score in zip(predictions['boxes'], predictions['labels'], predictions['scores']):
@@ -653,8 +715,35 @@ class DetectObjectsDlg(QtWidgets.QDialog):
         #print(len(final_points))
         filtered_vectors = ([Metashape.Vector(point[:-1]) for point in list(final_points)], [point[-1] for point in list(final_points)])
         return filtered_vectors
+        
+    def get_mask_model_v2(self, weights_path=None):
+        from torchvision.models.detection import maskrcnn_resnet50_fpn_v2, MaskRCNN
+        from torchvision.models.detection import MaskRCNN_ResNet50_FPN_V2_Weights, MaskRCNN_ResNet50_FPN_Weights
+        from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
+        from torchvision.models.detection.mask_rcnn import MaskRCNNPredictor
+        
+        model = maskrcnn_resnet50_fpn_v2(weights=MaskRCNN_ResNet50_FPN_V2_Weights.DEFAULT)
+        in_features_box = model.roi_heads.box_predictor.cls_score.in_features
+        in_features_mask = model.roi_heads.mask_predictor.conv5_mask.in_channels
 
+        dim_reduced = model.roi_heads.mask_predictor.conv5_mask.out_channels
+
+        model.roi_heads.box_predictor = FastRCNNPredictor(in_channels=in_features_box, num_classes=4)
+
+        model.roi_heads.mask_predictor = MaskRCNNPredictor(in_channels=in_features_mask, dim_reduced=dim_reduced, num_classes=4)
+
+        if weights_path:
+            state_dict = torch.load(weights_path)
+            model.load_state_dict(state_dict)   
+
+        model.name = 'maskrcnn_resnet50_fpn_v2'
+        return model
     
+    def detect_roads(self):
+        road_model = self.get_mask_model_v2(weights_path=self.model_mask_path)
+        self.export_ortho(width=2500, height=2500, roads=True)
+        self.predict_roads(model=road_model)
+        
     def detect_buildings(self):
         model = self.load_model()
         print('Model loaded')
@@ -667,7 +756,7 @@ class DetectObjectsDlg(QtWidgets.QDialog):
     def detect_buildings_Patch_mode(self):
         #Create folder for export ortho
 
-        if self.do_detect_buildings:
+        if self.create_building_layer:
             pathlib.Path(self.ortho_path).mkdir(parents=True, exist_ok=True)
             self.export_ortho()
             self.predict_buildings()
@@ -676,6 +765,116 @@ class DetectObjectsDlg(QtWidgets.QDialog):
             
         self.treat_buildings()
 
+    def get_contours(self, target):
+        if not len(target['masks']):
+            return None
+        masks = target['masks'] #> self.mask_threshold
+    
+        masks = masks.squeeze(1)
+
+        total_contours = []
+    #masks = masks.detach().cpu().numpy()
+        labels = set(target['labels'].detach().cpu().numpy())
+
+        for label in labels:
+            label_masks = target['labels'] == label
+
+            label_masks = masks[label_masks] > self.mask_threshold[label]
+
+            label_masks = label_masks.detach().cpu().numpy()
+
+            total_mask = label_masks[0]
+
+            for i in range(1, label_masks.shape[0]):
+                total_mask = total_mask | label_masks[i]
+        
+            total_mask = total_mask.astype('uint8')
+            contours, heir = cv2.findContours(total_mask, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+
+            areas = [cv2.contourArea(c) for c in contours]
+            try:
+                max_area = max(areas)
+            except ValueError:
+                print('areas is empty. skip.')
+            valid_contours = [c for c in contours if cv2.contourArea(c) > max_area*0.5]
+
+            total_contours.extend(valid_contours)
+
+        return tuple(total_contours)
+    
+    @torch.no_grad()
+    def predict_roads(self, model):
+        app = QtWidgets.QApplication.instance()
+        self.txtDetectionPBar.setText(f"Прогресс поиска дорог:")
+        Metashape.app.update()
+        app.processEvents()
+
+        classes = {'Asphalt road': 1, 'Country road': 2, 'Water': 3}
+        inv_classes = {v: k for k, v in classes.items()}
+        
+        model.to(self.device)
+
+        orthodata = [file for file in os.listdir(self.roads_ortho_path) if not file.endswith('.tfw')]
+
+        for num, image_name in enumerate(orthodata):
+            world_file_path = self.roads_ortho_path + image_name[:-4] + '.tfw'
+
+            with open(world_file_path, "r") as file:
+                matrix2x3 = list(map(float, file.readlines()))
+                matrix2x3 = np.array(matrix2x3).reshape(3, 2).T
+            
+            try:
+                image = cv2.imdecode(np.fromfile(self.roads_ortho_path + image_name, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
+                image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            except:
+                print(f'Existing/cv2 error at image: {image_name}')
+                continue
+            transform = self.eval_transform()        
+            model.eval()  
+
+            x = transform(image=image)       
+            x = x['image']
+            x = x[:3, ...].to(self.device) # RGBA -> RGB 
+            predictions = model([x,])        
+            out = predictions[0]
+
+            scores_valid = out['scores'] > self.roads_threshold
+            labels_valid = out['labels'] < 3
+
+            target = {}
+            target['masks'] = out['masks'][scores_valid * labels_valid]
+            target['boxes'] = out['boxes'][scores_valid * labels_valid]
+            target['labels'] = out['labels'][scores_valid * labels_valid]
+
+            image_contours = self.get_contours(target) #tuple of contours or None
+
+            image_contours = image_contours if image_contours is not None else []
+
+            points = []
+
+            for contour in image_contours:
+                x = np.squeeze(contour)
+                for point in x[::50]:
+                    x, y = point #slicing?
+                    x, y = matrix2x3 @ np.array([x, y, 1]).reshape(3, 1)
+                    x, y = x[0], y[0]
+                    p = Metashape.Vector([x, y])
+                    p = Metashape.CoordinateSystem.transform(p, self.chunk.orthomosaic.crs, self.chunk.shapes.crs)
+                    #print(f'\t{p}')
+                    points.append(p)
+
+            self.roads_points.extend(points)
+
+
+            self.detectionPBar.setValue((num + 1) * 100 / len(orthodata))
+            Metashape.app.update()
+            app.processEvents()
+            self.check_stopped()
+    
+        # extract points from common set to MS project
+        self.extract_roads_points()
+            
+    
     def predict_buildings(self):
         model = self.load_model()
         app = QtWidgets.QApplication.instance()
@@ -949,16 +1148,22 @@ class DetectObjectsDlg(QtWidgets.QDialog):
                 corners.append([p.x, p.y])
             self.draw_shape(label=label, corners=corners)
         
-    def export_ortho(self):
-        if not self.ortho_path:
-            raise InterruptedError("Specify path to export orthomosaic!") 
-
-        if len(os.listdir(self.ortho_path)) > 0:
+    def export_ortho(self, width=5000, height=5000, roads=False):
+        if not self.ortho_path or not self.roads_ortho_path:
+            raise InterruptedError("Specify path to export orthomosaic!")
+        
+        if roads:
+            path = self.roads_ortho_path
+        else:
+            path = self.ortho_path
+        
+        pathlib.Path(path).mkdir(parents=True, exist_ok=True)
+        if len(os.listdir(path)) > 0:
             print('Orthomosaic already exported. Proceed to predictions.')
         else:
-            self.chunk.exportRaster(path=self.ortho_path + '/ortho.tif', source_data=Metashape.OrthomosaicData, image_format=Metashape.ImageFormat.ImageFormatTIFF, save_alpha=True, white_background=True,
+            self.chunk.exportRaster(path=path + '/ortho.tif', source_data=Metashape.OrthomosaicData, image_format=Metashape.ImageFormat.ImageFormatTIFF, save_alpha=True, white_background=True,
                                     save_world=True,
-                                    split_in_blocks=True, block_width=5000, block_height=5000,)
+                                    split_in_blocks=True, block_width=width, block_height=height,)
          
     def get_shape_center(self, shape):
         coordinates = shape.geometry.coordinates[0]
@@ -1000,14 +1205,19 @@ class DetectObjectsDlg(QtWidgets.QDialog):
                 self.target_group = self.chunk.shapes.addGroup()
                 self.target_group.label = self.group_label
                 self.target_group.enabled = False
+                self.create_building_layer = True
             else:
                 all_groups = {group.label: group for group in self.chunk.shapes.groups}
                 self.target_group = all_groups[self.group_label]
-                self.do_detect_buildings = False
+                self.create_building_layer = False
             
             self.target_group_kps = self.chunk.shapes.addGroup()
             self.target_group_kps.label = self.kps_group_label
             self.target_group_kps.enabled = False
+
+            self.roads_group = self.chunk.shapes.addGroup()
+            self.roads_group.label = self.roads_group_label
+            self.roads_group.enabled = False
 
             for widget in self.widgets_to_disable:
                 widget.setEnabled(False)
@@ -1015,10 +1225,11 @@ class DetectObjectsDlg(QtWidgets.QDialog):
             
             self.do_export_ortho = self.checkIfExportOtho.isChecked()
             self.do_filter_points = self.checkIfFilterPoints.isChecked()
-            #self.do_detect_buildings = self.checkIfDetectBuildings.isChecked()
+            self.do_detect_buildings = self.checkIfDetectBuildings.isChecked()
             self.use_snow_model = self.checkIfUseSnowModel.isChecked()
             self.do_visualize = self.checkIfVisualize.isChecked()
             self.do_use_patchmode = self.checkIfUsepathcMode.isChecked()
+            self.do_detect_roads = self.checkIfDetectRoads.isChecked()
             
             self.filter_methods = {'Weighted': self.weighted_average, 'Mean': self.mean_points, 'Max': self.max_point}
             
@@ -1035,11 +1246,14 @@ class DetectObjectsDlg(QtWidgets.QDialog):
                 self.model_kps_path = self.model_kps_snow_path
             else:
                 self.model_kps_path = self.model_kps_default_path
-            
-            if self.do_use_patchmode:
-                self.detect_buildings_Patch_mode()
-            else:
-                self.detect_buildings()
+
+            if self.do_detect_buildings:
+                if self.do_use_patchmode:
+                    self.detect_buildings_Patch_mode()
+                else:
+                    self.detect_buildings()
+            if self.do_detect_roads:
+                self.detect_roads()
                 
             self.results_time_total = time.time() - self.time_start
 
