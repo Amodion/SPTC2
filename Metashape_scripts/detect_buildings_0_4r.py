@@ -1,9 +1,9 @@
 from PySide2 import QtGui, QtCore, QtWidgets
 
-import urllib.request, tempfile
-temporary_file = tempfile.NamedTemporaryFile(delete=False)
-find_links_file_url = "https://raw.githubusercontent.com/agisoft-llc/metashape-scripts/master/misc/links.txt"
-urllib.request.urlretrieve(find_links_file_url, temporary_file.name)    
+#import urllib.request, tempfile
+#temporary_file = tempfile.NamedTemporaryFile(delete=False)
+#find_links_file_url = "https://raw.githubusercontent.com/agisoft-llc/metashape-scripts/master/misc/links.txt"
+#urllib.request.urlretrieve(find_links_file_url, temporary_file.name)    
 
 import Metashape
 import torch
@@ -67,7 +67,7 @@ class DetectObjectsDlg(QtWidgets.QDialog):
         self.num_keypoints = 17
 
         self.roads_threshold = 0.95
-        self.mask_threshold = {1: 0.5, 2: 0.6, 3: 0.1}
+        self.mask_threshold = {1: 0.55, 2: 0.61, 3: 0.1} #{'Asphalt road': 1, 'Country road': 2, 'Water': 3}
 
         QtWidgets.QDialog.__init__(self, parent)
         self.setWindowTitle(f"Поиск точек на ортофотоплане (Metashape version: {self.major_version})")
@@ -767,17 +767,23 @@ class DetectObjectsDlg(QtWidgets.QDialog):
 
     def get_contours(self, target):
         if not len(target['masks']):
-            return None
+            return None, None
         masks = target['masks'] #> self.mask_threshold
+        boxes = target['boxes']
     
         masks = masks.squeeze(1)
 
         total_contours = []
+        total_boxes = []
     #masks = masks.detach().cpu().numpy()
         labels = set(target['labels'].detach().cpu().numpy())
 
         for label in labels:
             label_masks = target['labels'] == label
+
+            label_boxes = boxes[label_masks]
+
+            label_boxes = label_boxes.detach().cpu().numpy()
 
             label_masks = masks[label_masks] > self.mask_threshold[label]
 
@@ -800,7 +806,9 @@ class DetectObjectsDlg(QtWidgets.QDialog):
 
             total_contours.extend(valid_contours)
 
-        return tuple(total_contours)
+            total_boxes.extend(label_boxes)
+
+        return tuple(total_contours), total_boxes
     
     @torch.no_grad()
     def predict_roads(self, model):
@@ -846,16 +854,24 @@ class DetectObjectsDlg(QtWidgets.QDialog):
             target['boxes'] = out['boxes'][scores_valid * labels_valid]
             target['labels'] = out['labels'][scores_valid * labels_valid]
 
-            image_contours = self.get_contours(target) #tuple of contours or None
+            image_contours, boxes = self.get_contours(target) #tuple of contours or None
 
             image_contours = image_contours if image_contours is not None else []
 
+            boxes = boxes if boxes is not None else []
+
             points = []
 
-            for contour in image_contours:
-                x = np.squeeze(contour)
-                for point in x[::50]:
+            eps = 20
+
+            for contour, box in zip(image_contours, boxes):
+                x_min, y_min, x_max, y_max = box
+                c = np.squeeze(contour)
+                step = int(len(c) * 0.15)
+                for point in c[::step]:
                     x, y = point #slicing?
+                    if (abs(x - x_min) <= eps or abs(x - x_max) <= eps) or (abs(y - y_min) <= eps or abs(y - y_max) <= eps):
+                        continue
                     x, y = matrix2x3 @ np.array([x, y, 1]).reshape(3, 1)
                     x, y = x[0], y[0]
                     p = Metashape.Vector([x, y])

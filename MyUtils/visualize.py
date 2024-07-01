@@ -127,7 +127,7 @@ def visualize_masks(image: torch.Tensor, target: dict = None, inv_classes: dict 
                 masked_image = draw_segmentation_masks(image=image, masks=masks, alpha=alpha, colors=[obj_colors[obj] for obj in objects])
             else:
                 masked_image = draw_segmentation_masks(image=image, masks=masks, alpha=alpha)
-            masked_boxed_image = draw_bounding_boxes(masked_image, boxes, colors="red", width=10, labels=objects, font=font_path, font_size=75)
+            masked_boxed_image = draw_bounding_boxes(masked_image, boxes, colors="red", width=2, labels=objects, font=font_path, font_size=75)
 
         masked_boxed_image = F.to_pil_image(masked_boxed_image)
     else:
