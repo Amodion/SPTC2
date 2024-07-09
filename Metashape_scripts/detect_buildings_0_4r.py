@@ -16,6 +16,7 @@ import os
 import numpy as np
 from albumentations import RandomBrightnessContrast, InvertImg, Sharpen, Compose, Sequential
 from torchvision.transforms import functional as F
+from ultralytics import YOLO
 
 
 class DetectObjectsDlg(QtWidgets.QDialog):
@@ -43,11 +44,13 @@ class DetectObjectsDlg(QtWidgets.QDialog):
         self.do_filter_points = True
         self.do_detect_buildings = True
         self.do_detect_roads = False
+        self.yolo_roads = False
         self.use_path_mode = False
         self.model_path = 'C:/Users/User/Desktop' + '/NN_models/Building_detection_model.pth'
         self.model_kps_default_path = 'C:/Users/User/Desktop' + '/NN_models/Keypoints_detection_model.pth'
         self.model_kps_snow_path = 'C:/Users/User/Desktop' + '/NN_models/Keypoints_detection_model_snow.pth'
         self.model_mask_path = 'C:/Users/User/Desktop' + '/NN_models/Roads_detection_model.pth'
+        self.model_yolo_mask_path = 'C:/Users/User/Desktop' + '/NN_models/YOLO_model.pt'
         
         self.buildings_path = 'C:/Users/User/Desktop/Buildings/'#self.working_dir + '/Buildings/'  C:\Users\User\Desktop\Teobox_Kedrovka_2023-06-06T11.31.53
         
@@ -195,6 +198,11 @@ class DetectObjectsDlg(QtWidgets.QDialog):
         self.combo.addItem('Mean')
         self.combo.addItem('Max')
         self.widgets_to_disable.append(self.combo)
+
+        self.combo_road = QtWidgets.QComboBox()
+        self.combo_road.addItem('YOLOv8')
+        self.combo_road.addItem('Mask_RCNN')
+        self.widgets_to_disable.append(self.combo_road)
         
         self.filterKPSdistance = QtWidgets.QLineEdit()
         self.filterKPSdistance.setText('0.5')
@@ -270,6 +278,7 @@ class DetectObjectsDlg(QtWidgets.QDialog):
         KPSLoadLayout.addWidget(self.KPSconfidance, 7, 1)
 
         KPSLoadLayout.addWidget(self.checkIfUsepathcMode, 9, 0)
+        KPSLoadLayout.addWidget(self.combo_road, 9, 1)
         KPSLoadLayout.addWidget(self.checkIfDetectRoads, 8, 1)
         KPSLoadLayout.addWidget(self.checkIfDetectBuildings, 8, 0)
         
@@ -740,9 +749,13 @@ class DetectObjectsDlg(QtWidgets.QDialog):
         return model
     
     def detect_roads(self):
-        road_model = self.get_mask_model_v2(weights_path=self.model_mask_path)
         self.export_ortho(width=2500, height=2500, roads=True)
-        self.predict_roads(model=road_model)
+        if self.yolo_roads:
+            self.predict_roads_yolo()
+        else:
+            road_model = self.get_mask_model_v2(weights_path=self.model_mask_path)
+            self.predict_roads(model=road_model)
+            self.predict_roads_yolo()
         
     def detect_buildings(self):
         model = self.load_model()
@@ -810,10 +823,65 @@ class DetectObjectsDlg(QtWidgets.QDialog):
 
         return tuple(total_contours), total_boxes
     
+    def predict_roads_yolo(self):
+        app = QtWidgets.QApplication.instance()
+        self.txtDetectionPBar.setText(f"Прогресс поиска дорог (YOLOv8):")
+        Metashape.app.update()
+        app.processEvents()
+
+        yolo_model = YOLO(self.model_yolo_mask_path)
+        
+        yolo_model.to(self.device) #????
+
+        orthodata = [file for file in os.listdir(self.roads_ortho_path) if not file.endswith('.tfw')]
+
+        for num, image_name in enumerate(orthodata):
+            world_file_path = self.roads_ortho_path + image_name[:-4] + '.tfw'
+
+            with open(world_file_path, "r") as file:
+                matrix2x3 = list(map(float, file.readlines()))
+                matrix2x3 = np.array(matrix2x3).reshape(3, 2).T
+
+            res = yolo_model.predict(self.roads_ortho_path + image_name, conf=0.25, retina_masks=True, show_labels=False) # set specific cons value?
+            points = []
+            
+            for prediction in res: # One prediction per image given in input. Therefore res will contain one prediction
+                if prediction.masks is None:
+                    continue
+                cntrs = prediction.masks.xy
+                for cntr in cntrs:
+                    step = int(len(cntr) * 0.15)
+                    step = step if step > 0 else 1
+                    for point in cntr[::step]:
+                        x, y = point
+                        x, y = int(x), int(y)
+                        point = (x, y)
+                        x, y = matrix2x3 @ np.array([x, y, 1]).reshape(3, 1)
+                        x, y = x[0], y[0]
+                        p = Metashape.Vector([x, y])
+                        p = Metashape.CoordinateSystem.transform(p, self.chunk.orthomosaic.crs, self.chunk.shapes.crs)
+                        #print(f'\t{p}')
+                        points.append(p)
+
+            self.roads_points.extend(points)
+
+
+            self.detectionPBar.setValue((num + 1) * 100 / len(orthodata))
+            Metashape.app.update()
+            app.processEvents()
+            self.check_stopped()
+
+        del res
+        del yolo_model
+    
+        # extract points from common set to MS project
+        self.extract_roads_points()
+                        
+    
     @torch.no_grad()
     def predict_roads(self, model):
         app = QtWidgets.QApplication.instance()
-        self.txtDetectionPBar.setText(f"Прогресс поиска дорог:")
+        self.txtDetectionPBar.setText(f"Прогресс поиска дорог (Mask-RCNN):")
         Metashape.app.update()
         app.processEvents()
 
@@ -1269,6 +1337,10 @@ class DetectObjectsDlg(QtWidgets.QDialog):
                 else:
                     self.detect_buildings()
             if self.do_detect_roads:
+                if self.combo_road.currentText() == 'YOLOv8':
+                    self.yolo_roads = True
+                else:
+                    self.yolo_roads = False
                 self.detect_roads()
                 
             self.results_time_total = time.time() - self.time_start
