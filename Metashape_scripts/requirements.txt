@@ -1,0 +1,14 @@
+albumentations==1.3.1
+Metashape==2.0.2
+Metashape==0.0.4
+numpy==1.25.2
+numpy==1.24.3
+opencv_python==4.8.0.76
+pandas==1.5.3
+PySide2==5.15.2.1
+seaborn==0.13.2
+torch==2.0.1
+torch==2.0.1
+torchvision==0.15.2
+ultralytics==8.2.48
+dill
