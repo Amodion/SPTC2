@@ -200,8 +200,8 @@ class DetectObjectsDlg(QtWidgets.QDialog):
         self.widgets_to_disable.append(self.combo)
 
         self.combo_road = QtWidgets.QComboBox()
-        self.combo_road.addItem('YOLOv8')
         self.combo_road.addItem('Mask_RCNN')
+        self.combo_road.addItem('YOLOv8')
         self.widgets_to_disable.append(self.combo_road)
         
         self.filterKPSdistance = QtWidgets.QLineEdit()
@@ -755,7 +755,6 @@ class DetectObjectsDlg(QtWidgets.QDialog):
         else:
             road_model = self.get_mask_model_v2(weights_path=self.model_mask_path)
             self.predict_roads(model=road_model)
-            self.predict_roads_yolo()
         
     def detect_buildings(self):
         model = self.load_model()
@@ -806,7 +805,7 @@ class DetectObjectsDlg(QtWidgets.QDialog):
 
             for i in range(1, label_masks.shape[0]):
                 total_mask = total_mask | label_masks[i]
-        
+                
             total_mask = total_mask.astype('uint8')
             contours, heir = cv2.findContours(total_mask, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
 
@@ -1285,15 +1284,24 @@ class DetectObjectsDlg(QtWidgets.QDialog):
         try:
             self.stopped = False
 
-            if not self.buildings_exists():
-                self.target_group = self.chunk.shapes.addGroup()
-                self.target_group.label = self.group_label
-                self.target_group.enabled = False
-                self.create_building_layer = True
-            else:
-                all_groups = {group.label: group for group in self.chunk.shapes.groups}
-                self.target_group = all_groups[self.group_label]
-                self.create_building_layer = False
+            self.do_export_ortho = self.checkIfExportOtho.isChecked()
+            self.do_filter_points = self.checkIfFilterPoints.isChecked()
+            self.do_detect_buildings = self.checkIfDetectBuildings.isChecked()
+            self.use_snow_model = self.checkIfUseSnowModel.isChecked()
+            self.do_visualize = self.checkIfVisualize.isChecked()
+            self.do_use_patchmode = self.checkIfUsepathcMode.isChecked()
+            self.do_detect_roads = self.checkIfDetectRoads.isChecked()
+
+            if self.do_use_patchmode:
+                if not self.buildings_exists():
+                    self.target_group = self.chunk.shapes.addGroup()
+                    self.target_group.label = self.group_label
+                    self.target_group.enabled = False
+                    self.create_building_layer = True
+                else:
+                    all_groups = {group.label: group for group in self.chunk.shapes.groups}
+                    self.target_group = all_groups[self.group_label]
+                    self.create_building_layer = False
             
             self.target_group_kps = self.chunk.shapes.addGroup()
             self.target_group_kps.label = self.kps_group_label
@@ -1307,13 +1315,6 @@ class DetectObjectsDlg(QtWidgets.QDialog):
                 widget.setEnabled(False)
             self.btnStop.setEnabled(True)
             
-            self.do_export_ortho = self.checkIfExportOtho.isChecked()
-            self.do_filter_points = self.checkIfFilterPoints.isChecked()
-            self.do_detect_buildings = self.checkIfDetectBuildings.isChecked()
-            self.use_snow_model = self.checkIfUseSnowModel.isChecked()
-            self.do_visualize = self.checkIfVisualize.isChecked()
-            self.do_use_patchmode = self.checkIfUsepathcMode.isChecked()
-            self.do_detect_roads = self.checkIfDetectRoads.isChecked()
             
             self.filter_methods = {'Weighted': self.weighted_average, 'Mean': self.mean_points, 'Max': self.max_point}
             
