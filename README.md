@@ -1,9 +1,22 @@
 
 # DESCRIPTION
 
+## Contents
+
+Present repository is my workspace where I train and test models, and also develop script for deployement. It is not very clean though.
+
+There is four jupyter notbooks with workflow of trainig models described below: **Net_1.ipynb, Net_2.ipynb, Net_3.ipynb, Net_4.ipynb**.
+
+Also, there is notebook with workflow for training Yolo model: **Yolo_train.ipynb**
+
+Folder **MyUtils** contains utils from Faster_RCNN team and a few of mine own.
+
+Folder **Metashape_scripts** contains main script for working software **detect_buldings_0_4.py** and one I xperiment with during work. Also there is **requirements.txt** file for main script.
+
 ## NET 1
 
 Faster-RCNN architecture applyied for living buildings detection on imges taken from drone. Exmples shown below.
+
 ![Net_1](https://github.com/user-attachments/assets/c6e7dc88-96c0-4ab5-8331-9db1907b1950)
 
 ![Net_1_1](https://github.com/user-attachments/assets/fb183c85-aeda-4bcf-b423-c291ff8b3399)
@@ -12,6 +25,7 @@ Faster-RCNN architecture applyied for living buildings detection on imges taken 
 ## NET 2
 
 Keypoint-RCNN architecture applyied for buildings corners detection on images. Exaples shown below.
+
 ![Net_2](https://github.com/user-attachments/assets/e134385b-d3ec-48e5-ae73-6b9c61d94c85)
 ![Net_2_1](https://github.com/user-attachments/assets/aa15f8b5-1227-40f8-8ccf-525da449b3e7)
 ![Net_2_2](https://github.com/user-attachments/assets/9fa62f3d-77b2-4dec-8c4b-a9fbfc7dada7)
@@ -51,6 +65,7 @@ Results are as follows:
 #### Roads
 
 Note: Red dots show countours of roads detected and segmented via Mask-RCNN. Blue ones via Yolov8.
+
 ![Пример_дороги](https://github.com/user-attachments/assets/2c4a21a2-a20f-4cf7-9f7f-bd8ff4465c60)
 ![Пример_дороги_2](https://github.com/user-attachments/assets/66ed69b8-489d-459e-bb0c-078c9a76ff60)
 ![Пример_дороги_3](https://github.com/user-attachments/assets/fd2f3b99-fdc8-4b96-a6f6-c03458d7d0a5)
