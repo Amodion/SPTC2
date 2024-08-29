@@ -13,6 +13,10 @@ Folder **MyUtils** contains utils from Faster_RCNN team and a few of mine own.
 
 Folder **Metashape_scripts** contains main script for working software **detect_buldings_0_4.py** and one I xperiment with during work. Also there is **requirements.txt** file for main script.
 
+## Data
+
+Data was collected from inner company source. It was photos taken from drone flying above villages. Data was annotated via Label Studio and Roboflow (compleat datasets was created via last)
+
 ## NET 1
 
 Faster-RCNN architecture applyied for living buildings detection on imges taken from drone. Exmples shown below.
