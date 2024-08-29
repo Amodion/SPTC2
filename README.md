@@ -5,7 +5,7 @@
 
 Faster-RCNN architecture applyied for living buildings detection on imges taken from drone. Exmples shown below.
 
-![[Net_1.jpg]]
+![[https://github.com/Amodion/SPTC2/blob/main/Images/Net_1.jpg]]
 ![[Net_1_1.jpg]]
 
 ## NET 2
