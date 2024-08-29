@@ -5,16 +5,16 @@
 
 Faster-RCNN architecture applyied for living buildings detection on imges taken from drone. Exmples shown below.
 
-![[ship2-5-3.jpg_pred.jpg]]
-![[ship2-5-5.jpg_pred.jpg]]
+![[Net_1.jpg]]
+![[Net_1_1.jpg]]
 
 ## NET 2
 
 Keypoint-RCNN architecture applyied for buildings corners detection on images. Exaples shown below.
-![[TEO_1_00167_Ship_crop_0.jpg]]
+![[Net_2.jpg]]
 
-![[TEO_1_00168_Ship_crop_0.jpg]]
-![[TEO_1_00404_Ship_crop_2.jpg]]![[TEO_1_00505_Ship_crop_4.jpg]]![[TEO_1_01114_Ship_crop_1.jpg]]
+![[Net_2_1.jpg]]
+![[Net_2_2.jpg]]![[Net_2_3.jpg]]![[Net_2_4.jpg]]
 
 ## NET 3
 
@@ -24,8 +24,8 @@ Work not finished. Idea was to detect power pillars and its ground point.
 
 Mask-RCNN applyied for detection and segmentation of roads. Examples below.
 
-![[rodionovo-6-0_2.jpg]]
-![[Pasted image 20240829115806.png]]
+![[Net_4.jpg]]
+![[Net_4_1.png]]
 
 Also, Yolov8 model was trained for the same task. Examples are shown in the following section
 
